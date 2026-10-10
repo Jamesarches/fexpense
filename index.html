@@ -101,6 +101,8 @@ function load(){                                  // read saved data from the ph
   ];
   if (!d.unpaid) d.unpaid = [];
   if (!d.accts.some(function(a){ return a.id === "applepay"; })) d.accts.push({ id: "applepay", name: "Apple Pay", s: "Pay", c: "#ffffff", open: 0 });
+  if (!d.accts.some(function(a){ return a.id === "cash"; })) d.accts.push({ id: "cash", name: "Cash", s: "Cash", c: "#8fcfa9", open: 0 });
+  d.accts.forEach(function(a){ if (a.id === "cash") a.name = "Cash"; });
   if (!d.hc) d.hc = {};
   if (!d.foods) d.foods = [];
   if (!d.weights) d.weights = [{ id: 1, date: ds(new Date()), kg: 86 }];
@@ -131,7 +133,7 @@ function add(){
 function addIncome(){
   var a = parseFloat(el("iamt").value);
   if (!(a > 0)) { alert("Enter an amount"); return; }
-  S.tx.push({ id: Date.now(), type: "income", amt: a, cat: "Salary", acct: el("iacc").value, note: el("inote").value.trim(), date: el("idt").value || ds(new Date()) });
+  S.tx.push({ id: Date.now(), type: "income", amt: a, cat: "Salary", acct: "cash", note: el("inote").value.trim(), date: el("idt").value || ds(new Date()) });
   save(); render();
 }
 // account helpers
@@ -307,19 +309,19 @@ function homeMain(){
 }
 
 function daily(){
-  var inc = monthTx().filter(function(t){ return t.type === "income"; }), days = {};
+  var inc = monthTx().filter(function(t){ return t.type === "income" && t.acct === "cash"; }), days = {};
   inc.forEach(function(t){ (days[t.date] = days[t.date] || []).push(t); });
   var keys = Object.keys(days).sort().reverse(), total = sum(inc,"income");
   var rows = keys.map(function(k){
     var dayTotal = days[k].reduce(function(s,t){ return s + t.amt; }, 0);
     return '<div class="card"><div class="row" style="margin:0"><b>' + k + '</b><b class="g">+' + money(dayTotal) + '</b></div>' + days[k].map(txRow).join("") + '</div>';
   }).join("");
-  return '<h1>Daily income</h1>' +
+  return '<h1>Daily cash</h1>' +
   '<div class="card"><div class="row"><div><small>This month</small><b class="g">' + money(total) + '</b></div>' +
   '<div><small>Days earned</small><b>' + keys.length + '</b></div>' +
   '<div><small>Avg / day</small><b>' + money(keys.length ? total / keys.length : 0) + '</b></div></div>' +
   '<input id="idt" type="date" value="' + ds(new Date()) + '"><input id="iamt" type="number" inputmode="decimal" placeholder="Amount earned">' +
-  '<select id="iacc">' + accOpts() + '</select><input id="inote" placeholder="Source (optional)"><div class="row2"><button style="width:100%" onclick="addIncome()">Add income</button></div></div>' +
+  '<input id="inote" placeholder="Source (optional)"><div class="row2"><button style="width:100%" onclick="addIncome()">Add cash</button></div></div>' +
   (rows || '<p class="mut">No income logged this month.</p>');
 }
 
