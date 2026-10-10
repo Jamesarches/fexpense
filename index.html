@@ -84,7 +84,7 @@ nav button[data-t=home].on{background:#fff;color:#000}
 
 <script>
 // ===== PART 2: SETTINGS + SAVED DATA =====
-var CUR = "$";                                   // change to your currency symbol
+var CUR = "₱";                                   // change to your currency symbol
 var EX = ["Food","Bills","Transport","Shopping","Fun","Health","Other"];   // expense categories
 var IN = ["Salary","Gift","Side income","Other"];                          // income categories
 var tab = "home", type = "expense", hSel = null, cal = new Date();
@@ -218,6 +218,38 @@ function importAP(inp){   // reads the shortcut's text file; each payment line l
   };
   r.readAsText(f);
 }
+function backupCard(){
+  return '<div class="card"><b>Backup</b><small>Last backup: ' + (S.lastBackup || "never") + '</small>' +
+  '<div class="row2"><button style="flex:1" onclick="backup()">Save backup</button>' +
+  '<label class="imp" style="flex:1;text-align:center;padding:12px 0">Restore<input type="file" accept=".json,application/json,text/plain" onchange="restore(this)" hidden></label></div></div>';
+}
+function backup(){   // saves ALL your data to a file you can keep in Files / iCloud
+  S.lastBackup = ds(new Date()); save();
+  var name = "FExpense-backup-" + S.lastBackup + ".json", text = JSON.stringify(S, null, 1);
+  var file = new File([text], name, { type: "application/json" });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    navigator.share({ files: [file], title: name }).catch(function(){});   // opens the share sheet: choose Save to Files
+  } else {
+    var a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  render();
+}
+function restore(inp){   // loads a backup file and replaces the current data
+  var f = inp.files && inp.files[0]; if (!f) return;
+  var r = new FileReader();
+  r.onload = function(){
+    try {
+      var d = JSON.parse(r.result);
+      if (!d || !Array.isArray(d.tx)) throw 0;
+      if (!confirm("Replace all current data with this backup?")) { inp.value = ""; return; }
+      localStorage.setItem("fexpense", JSON.stringify(d)); S = load(); save(); render();
+      alert("Backup restored");
+    } catch(e){ alert("That file isn't a valid FExpense backup"); }
+    inp.value = "";
+  };
+  r.readAsText(f);
+}
 var fsub = "over";
 function setF(v){ fsub = v; render(); }
 function addU(){
@@ -341,7 +373,7 @@ function accounts(){
   '<input id="aamt" type="number" inputmode="decimal" placeholder="Amount"><input id="anote" placeholder="Note (optional)">' +
   '<div class="row2"><button style="flex:1" onclick="adjust(1)">+ Add</button><button class="red" style="flex:1" onclick="adjust(-1)">− Deduct</button></div></div>' +
   '<div class="card"><b>Transfer between accounts</b><select id="tfrom">' + accOpts() + '</select><select id="tto">' + accOpts(S.accts[1].id) + '</select>' +
-  '<input id="tamt" type="number" inputmode="decimal" placeholder="Amount"><div class="row2"><button style="width:100%" onclick="transfer()">Transfer</button></div></div>';
+  '<input id="tamt" type="number" inputmode="decimal" placeholder="Amount"><div class="row2"><button style="width:100%" onclick="transfer()">Transfer</button></div></div>' + backupCard();
 }
 
 function historyScreen(){
