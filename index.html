@@ -102,7 +102,7 @@ function load(){                                  // read saved data from the ph
   if (!d.unpaid) d.unpaid = [];
   if (!d.accts.some(function(a){ return a.id === "applepay"; })) d.accts.push({ id: "applepay", name: "Apple Pay", s: "Pay", c: "#ffffff", open: 0 });
   if (!d.accts.some(function(a){ return a.id === "cash"; })) d.accts.push({ id: "cash", name: "Cash", s: "Cash", c: "#8fcfa9", open: 0 });
-  d.accts.forEach(function(a){ if (a.id === "cash") a.name = "Cash"; });
+  d.accts.forEach(function(a){ if (a.id === "cash") a.name = "Cash"; if (a.id === "applepay") a.link = "unionbank"; });
   if (!d.hc) d.hc = {};
   if (!d.foods) d.foods = [];
   if (!d.weights) d.weights = [{ id: 1, date: ds(new Date()), kg: 86 }];
@@ -140,11 +140,13 @@ function addIncome(){
 function acct(id){ return S.accts.find(function(a){ return a.id === id; }) || S.accts[0]; }
 function an(id){ return acct(id).name; }
 function badge(id, big){ var a = acct(id); return '<span class="bdg' + (big ? ' big' : '') + '" style="border-color:' + a.c + '">' + a.s + '</span>'; }
+function root(id){ var a = S.accts.find(function(x){ return x.id === id; }); return a && a.link ? a.link : id; }   // Apple Pay -> UnionBank
 function bal(id){
+  id = root(id);                                   // linked accounts share their source's balance
   var b = acct(id).open || 0;
   S.tx.forEach(function(t){
-    if (t.type === "transfer") { if (t.from === id) b -= t.amt; if (t.to === id) b += t.amt; }
-    else if (t.acct === id) b += t.type === "expense" ? -t.amt : t.amt;
+    if (t.type === "transfer") { if (root(t.from) === id) b -= t.amt; if (root(t.to) === id) b += t.amt; }
+    else if (root(t.acct) === id) b += t.type === "expense" ? -t.amt : t.amt;
   });
   return b;
 }
@@ -163,7 +165,7 @@ function transfer(){
 }
 var hf = "all";
 function setHf(v){ hf = v; render(); }
-function del(id){ var d0 = S.tx.find(function(t){ return t.id === id; }); if (d0 && d0.uid) S.unpaid.forEach(function(u){ if (u.id === d0.uid) { u.paid = false; u.paidOn = ""; } }); S.tx = S.tx.filter(function(t){ return t.id !== id; }); save(); render(); }
+function del(id){ var d0 = S.tx.find(function(t){ return t.id === id; }); if (d0 && d0.uid) S.unpaid.forEach(function(u){ if (u.id === d0.uid) { u.part = Math.max(0, Math.round(((u.part || 0) - d0.amt) * 100) / 100); u.paid = false; u.paidOn = ""; } }); S.tx = S.tx.filter(function(t){ return t.id !== id; }); save(); render(); }
 var HB = [["pickle","Pickleball"],["basket","Basketball"],["jog","Jog"],["gym","Gym"]];
 function cnt(k, d){ return (S.hc[k] && S.hc[k][d]) || 0; }
 function bump(k, n){                          // + / - on today's counter
@@ -260,22 +262,33 @@ function addU(){
   S.unpaid.push({ id: Date.now(), name: n, amt: a, acct: el("uacc").value, date: el("udt").value || ds(new Date()), paid: false, paidOn: "" });
   save(); render();
 }
-function pay(id){   // pays the bill: deducts from the chosen bank/e-wallet and logs it
-  var u = S.unpaid.find(function(x){ return x.id === id; }); if (!u) return;
+function pay(id, x){   // pays what is left (or a smaller amount x): deducts from the bank/e-wallet and logs it
+  var u = S.unpaid.find(function(v){ return v.id === id; }); if (!u) return;
+  var left = Math.round((u.amt - (u.part || 0)) * 100) / 100, a = x && x < left ? x : left;
   var b = bal(u.acct);
-  if (b < u.amt && !confirm(an(u.acct) + " balance is " + money(b) + ". Pay anyway?")) return;
+  if (b < a && !confirm(an(u.acct) + " balance is " + money(b) + ". Pay anyway?")) return;
   var t = ds(new Date());
-  S.tx.push({ id: Date.now(), type: "expense", amt: u.amt, acct: u.acct, cat: "Bills", note: u.name, date: t, uid: id });
-  u.paid = true; u.paidOn = t; save(); render();
+  S.tx.push({ id: Date.now(), type: "expense", amt: a, acct: u.acct, cat: "Bills", note: u.name, date: t, uid: id });
+  u.part = Math.round(((u.part || 0) + a) * 100) / 100;
+  if (u.part >= u.amt - 0.005) { u.paid = true; u.paidOn = t; }
+  save(); render();
+}
+function payPart(id){   // the "Part" button: asks how much to pay now
+  var u = S.unpaid.find(function(v){ return v.id === id; }); if (!u) return;
+  var left = Math.round((u.amt - (u.part || 0)) * 100) / 100, v = prompt("Amount to pay now (" + money(left) + " left)");
+  if (v === null) return;
+  var x = parseFloat(v);
+  if (!(x > 0)) { alert("Enter an amount"); return; }
+  pay(id, x);
 }
 function delU(id){ S.unpaid = S.unpaid.filter(function(u){ return u.id !== id; }); save(); render(); }
 function unpaidView(){
   var open = S.unpaid.filter(function(u){ return !u.paid; }).sort(function(a, b){ return a.date.localeCompare(b.date); });
   var done = S.unpaid.filter(function(u){ return u.paid; }).sort(function(a, b){ return b.paidOn.localeCompare(a.paidOn); });
-  var tot = open.reduce(function(s, u){ return s + u.amt; }, 0);
+  var tot = open.reduce(function(s, u){ return s + u.amt - (u.part || 0); }, 0);
   function row(u){
-    return '<div class="item">' + badge(u.acct) + '<div><b>' + esc(u.name) + '</b><small>' + money(u.amt) + '</small><small>' + (u.paid ? 'Paid ' + u.paidOn : 'Due ' + u.date) + '</small></div>' +
-      (u.paid ? '' : '<button onclick="pay(' + u.id + ')">Pay</button>') + '<button class="x" onclick="delU(' + u.id + ')">✕</button></div>';
+    return '<div class="item">' + badge(u.acct) + '<div><b>' + esc(u.name) + '</b><small>' + (!u.paid && u.part ? money(u.amt - u.part) + ' left of ' + money(u.amt) : money(u.amt)) + '</small><small>' + (u.paid ? 'Paid ' + u.paidOn : 'Due ' + u.date) + '</small></div>' +
+      (u.paid ? '' : '<button class="ghost" onclick="payPart(' + u.id + ')">Part</button><button onclick="pay(' + u.id + ')">Pay</button>') + '<button class="x" onclick="delU(' + u.id + ')">✕</button></div>';
   }
   return '<div class="card" style="border:0"><small>Total unpaid</small><b style="font-size:28px;font-weight:300">' + money(tot) + '</b></div>' +
   '<div class="card"><b>Add unpaid</b><input id="uname" placeholder="Name (e.g. Internet bill)"><input id="uamt" type="number" inputmode="decimal" placeholder="Amount">' +
@@ -365,11 +378,12 @@ function habits(){
 }
 
 function accounts(){
-  var total = S.accts.reduce(function(s, a){ return s + bal(a.id); }, 0);
+  var total = S.accts.reduce(function(s, a){ return a.link ? s : s + bal(a.id); }, 0);   // linked accounts are not counted twice
   return '<h1>Accounts</h1><div class="card"><small>Total across all accounts</small><b style="font-size:28px">' + money(total) + '</b></div>' +
   S.accts.map(function(a){
+    if (a.link) return "";                         // Apple Pay shows inside UnionBank
     var b = bal(a.id);
-    return '<div class="card"><div class="item" style="border:0;padding:0">' + badge(a.id, 1) + '<div><b>' + a.name + '</b></div><b class="' + (b < 0 ? "r" : "") + '">' + money(b) + '</b></div></div>';
+    return '<div class="card"><div class="item" style="border:0;padding:0">' + badge(a.id, 1) + '<div><b>' + a.name + '</b>' + (S.accts.some(function(x){ return x.link === a.id; }) ? '<small>Includes Apple Pay</small>' : '') + '</div><b class="' + (b < 0 ? "r" : "") + '">' + money(b) + '</b></div></div>';
   }).join("") +
   '<div class="card"><b>Add or deduct money</b><select id="aacc">' + accOpts() + '</select>' +
   '<input id="aamt" type="number" inputmode="decimal" placeholder="Amount"><input id="anote" placeholder="Note (optional)">' +
@@ -379,7 +393,7 @@ function accounts(){
 }
 
 function historyScreen(){
-  var list = S.tx.filter(function(t){ return hf === "all" || t.acct === hf || t.from === hf || t.to === hf; })
+  var list = S.tx.filter(function(t){ return hf === "all" || t.acct === hf || t.from === hf || t.to === hf || root(t.acct) === hf || root(t.from) === hf || root(t.to) === hf; })
     .sort(function(a, b){ return b.date.localeCompare(a.date) || b.id - a.id; });
   var chips = '<button class="' + (hf === "all" ? "on" : "") + '" onclick="setHf(\'all\')">All</button>' + S.accts.map(function(a){
     return '<button class="' + (hf === a.id ? "on" : "") + '" onclick="setHf(\'' + a.id + '\')">' + a.name + '</button>';
