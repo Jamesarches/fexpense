@@ -66,6 +66,7 @@ nav{align-items:center}
 nav button[data-t=accounts],nav button[data-t=charts]{flex:1.5}
 nav button[data-t=home]{flex:1.8;margin:8px 4px;padding:14px 0;font-size:15px;font-weight:600;letter-spacing:.14em;color:#fff;border:1px solid #fff;border-radius:14px}
 nav button[data-t=home].on{background:#fff;color:#000}
+.imp{display:inline-block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer}
 .step{width:34px;height:34px;border-radius:50%;background:transparent;border:1px solid #444;color:#fff;padding:0;font-size:18px;line-height:1}
 </style>
 </head>
@@ -195,6 +196,28 @@ function txRow(t){
     '<button class="x" onclick="del(' + t.id + ')">✕</button></div>';
 }
 
+function impBtn(){
+  return '<div style="text-align:right;margin-top:6px"><label class="imp">Import Apple Pay<input id="impf" type="file" accept=".txt,text/plain" onchange="importAP(this)" hidden></label></div>';
+}
+function importAP(inp){   // reads the shortcut's text file; each payment line looks like  FX|date time|amount|merchant
+  var f = inp.files && inp.files[0]; if (!f) return;
+  var r = new FileReader();
+  r.onload = function(){
+    var segs = String(r.result).split("FX|").slice(1), added = 0, skipped = 0;
+    segs.forEach(function(sg, i){
+      var p = sg.trim().split("|"), ts = (p[0] || "").trim();
+      var a = Math.abs(parseFloat((p[1] || "").replace(/[^0-9.\-]/g, ""))), m = p.slice(2).join("|").trim();
+      if (!/^\d{4}-\d{2}-\d{2}/.test(ts) || !(a > 0)) return;           // skips blank / zero payments
+      var ref = ts + "|" + a + "|" + m;
+      if (S.tx.some(function(t){ return t.ref === ref; })) { skipped++; return; }   // already imported
+      S.tx.push({ id: Date.now() + i, type: "expense", amt: a, acct: "applepay", cat: "Other", note: m || "Apple Pay", date: ts.slice(0, 10), ref: ref, src: "file" });
+      added++;
+    });
+    inp.value = ""; save(); render();
+    alert(added + " new Apple Pay payment(s) imported" + (skipped ? " (" + skipped + " already added)" : ""));
+  };
+  r.readAsText(f);
+}
 var fsub = "over";
 function setF(v){ fsub = v; render(); }
 function addU(){
@@ -232,7 +255,7 @@ function home(){
   var n = S.unpaid.filter(function(u){ return !u.paid; }).length;
   return '<h1>Fuck</h1><div class="seg"><button class="' + (fsub === "over" ? "on" : "") + '" onclick="setF(\'over\')">Overview</button>' +
     '<button class="' + (fsub === "unpaid" ? "on" : "") + '" onclick="setF(\'unpaid\')">Unpaid' + (n ? ' (' + n + ')' : '') + '</button></div>' +
-    (fsub === "unpaid" ? unpaidView() : homeMain());
+    (fsub === "unpaid" ? unpaidView() : impBtn() + homeMain());
 }
 function homeMain(){
   var m = monthTx(), inc = sum(m,"income"), exp = sum(m,"expense");
