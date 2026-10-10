@@ -66,6 +66,7 @@ nav{align-items:center}
 nav button[data-t=accounts],nav button[data-t=charts]{flex:1.5}
 nav button[data-t=home]{flex:1.8;margin:8px 4px;padding:14px 0;font-size:15px;font-weight:600;letter-spacing:.14em;color:#fff;border:1px solid #fff;border-radius:14px}
 nav button[data-t=home].on{background:#fff;color:#000}
+.step{width:34px;height:34px;border-radius:50%;background:transparent;border:1px solid #444;color:#fff;padding:0;font-size:18px;line-height:1}
 </style>
 </head>
 <body>
@@ -98,6 +99,10 @@ function load(){                                  // read saved data from the ph
     { id: "unionbank", name: "UnionBank", s: "UB", c: "#f26b21", open: 0 }
   ];
   if (!d.unpaid) d.unpaid = [];
+  if (!d.accts.some(function(a){ return a.id === "applepay"; })) d.accts.push({ id: "applepay", name: "Apple Pay", s: "Pay", c: "#ffffff", open: 0 });
+  if (!d.hc) d.hc = {};
+  if (!d.foods) d.foods = [];
+  if (!d.weights) d.weights = [{ id: 1, date: ds(new Date()), kg: 86 }];
   d.tx.forEach(function(t){ if (!t.acct && t.type !== "transfer") t.acct = d.accts[0].id; });
   return d;
 }
@@ -156,17 +161,27 @@ function transfer(){
 var hf = "all";
 function setHf(v){ hf = v; render(); }
 function del(id){ var d0 = S.tx.find(function(t){ return t.id === id; }); if (d0 && d0.uid) S.unpaid.forEach(function(u){ if (u.id === d0.uid) { u.paid = false; u.paidOn = ""; } }); S.tx = S.tx.filter(function(t){ return t.id !== id; }); save(); render(); }
-function addHabit(){
-  var n = el("hn").value.trim(); if (!n) return;
-  S.habits.push({ id: Date.now(), name: n, done: [] }); save(); render();
-}
-function delHabit(id){ S.habits = S.habits.filter(function(h){ return h.id !== id; }); save(); render(); }
-function toggle(id){
-  var h = S.habits.find(function(x){ return x.id === id; }), t = ds(new Date()), i = h.done.indexOf(t);
-  if (i < 0) h.done.push(t); else h.done.splice(i, 1);
+var HB = [["pickle","Pickleball"],["basket","Basketball"],["jog","Jog"],["gym","Gym"]];
+function cnt(k, d){ return (S.hc[k] && S.hc[k][d]) || 0; }
+function bump(k, n){                          // + / - on today's counter
+  var d = ds(new Date()), c = Math.max(0, cnt(k, d) + n);
+  S.hc[k] = S.hc[k] || {};
+  if (c) S.hc[k][d] = c; else delete S.hc[k][d];
   save(); render();
 }
-function pick(id){ hSel = id; render(); }
+function lb(kg){ return (kg * 2.20462).toFixed(1); }   // kg to pounds
+function addW(){
+  var kg = parseFloat(el("wkg").value);
+  if (!(kg > 0)) { alert("Enter your weight in kg"); return; }
+  S.weights.push({ id: Date.now(), date: ds(new Date()), kg: kg }); save(); render();
+}
+function delW(id){ if (S.weights.length > 1) { S.weights = S.weights.filter(function(w){ return w.id !== id; }); save(); render(); } }
+function addF(){
+  var n = el("fname").value.trim(); if (!n) return;
+  S.foods.push({ id: Date.now(), name: n, date: ds(new Date()) }); save(); render();
+}
+function delF(id){ S.foods = S.foods.filter(function(f){ return f.id !== id; }); save(); render(); }
+function pick(k){ hSel = k; render(); }
 function shiftCal(n){ cal = new Date(cal.getFullYear(), cal.getMonth() + n, 1); render(); }
 
 // ===== PART 5: SCREENS (builds the HTML for each tab) =====
@@ -254,31 +269,42 @@ function daily(){
 }
 
 function habits(){
-  var t = ds(new Date());
-  var h = '<h1>Habits</h1><div class="card"><div class="row2" style="margin:0"><input id="hn" placeholder="New habit (e.g. Walk 20 min)"><button onclick="addHabit()">Add</button></div></div>';
-  if (!S.habits.length) return h + '<p class="mut">Add your first habit above.</p>';
-  h += '<div class="card"><b>Today</b>' + S.habits.map(function(x){
-    var d = x.done.indexOf(t) >= 0;
-    return '<div class="item"><button class="chk ' + (d ? "on" : "") + '" onclick="toggle(' + x.id + ')">' + (d ? "✓" : "") + '</button>' +
-      '<span class="grow">' + esc(x.name) + '</span><button class="x" onclick="delHabit(' + x.id + ')">✕</button></div>';
+  var t = ds(new Date()), mo0 = t.slice(0,7);
+  var h = '<h1>Habits</h1><div class="card" style="border:0"><b>Today</b>' + HB.map(function(x){
+    var k = x[0], mc = 0;
+    Object.keys(S.hc[k] || {}).forEach(function(d){ if (d.slice(0,7) === mo0) mc += S.hc[k][d]; });
+    return '<div class="item"><div><b>' + x[1] + '</b><small>' + mc + ' this month</small></div>' +
+      '<button class="step" onclick="bump(\'' + k + '\',-1)">\u2212</button><b style="min-width:24px;text-align:center">' + cnt(k, t) + '</b>' +
+      '<button class="step" onclick="bump(\'' + k + '\',1)">+</button></div>';
   }).join("") + '</div>';
-  if (!hSel || !S.habits.some(function(x){ return x.id === hSel; })) hSel = S.habits[0].id;
-  var sel = S.habits.find(function(x){ return x.id === hSel; });
+  var ws = S.weights.slice().sort(function(a, b){ return a.date.localeCompare(b.date) || a.id - b.id; }), cur = ws[ws.length - 1];
+  h += '<div class="card"><b>Weight</b><div class="row" style="margin:12px 0 0"><div><b>' + cur.kg + ' kg</b><small>' + cur.date + '</small></div>' +
+    '<div><b>' + lb(cur.kg) + ' lb</b><small>pounds</small></div></div>' +
+    '<div class="row2"><input id="wkg" type="number" inputmode="decimal" placeholder="New weight (kg)"><button onclick="addW()">Log</button></div>' +
+    ws.slice(-4, -1).reverse().map(function(w){
+      return '<div class="item"><div><b>' + w.kg + ' kg</b><small>' + w.date + '</small></div><small>' + lb(w.kg) + ' lb</small><button class="x" onclick="delW(' + w.id + ')">\u2715</button></div>';
+    }).join("") + '</div>';
+  h += '<div class="card"><b>Food I tried</b><small>' + S.foods.length + ' total</small>' +
+    '<div class="row2"><input id="fname" placeholder="Latest food you tried"><button onclick="addF()">Add</button></div>' +
+    S.foods.slice().reverse().slice(0, 6).map(function(f){
+      return '<div class="item"><div><b>' + esc(f.name) + '</b><small>' + f.date + '</small></div><button class="x" onclick="delF(' + f.id + ')">\u2715</button></div>';
+    }).join("") + '</div>';
+  if (typeof hSel !== "string") hSel = "pickle";
   var y = cal.getFullYear(), mo = cal.getMonth(), first = new Date(y, mo, 1).getDay(), n = new Date(y, mo + 1, 0).getDate();
   var cells = "", count = 0, i, d;
   ["S","M","T","W","T","F","S"].forEach(function(w){ cells += '<em>' + w + '</em>'; });
   for (i = 0; i < first; i++) cells += '<span></span>';
   for (d = 1; d <= n; d++) {
-    var k = y + "-" + pad(mo + 1) + "-" + pad(d), on = sel.done.indexOf(k) >= 0;
+    var k = y + "-" + pad(mo + 1) + "-" + pad(d), on = cnt(hSel, k) > 0;
     if (on) count++;
     cells += '<span class="day ' + (on ? "on" : "") + (k === t ? " today" : "") + '">' + d + '</span>';
   }
   var name = cal.toLocaleString("default", { month: "long", year: "numeric" });
-  return h + '<div class="card"><b>History</b><div class="chips">' + S.habits.map(function(x){
-    return '<button class="' + (x.id === hSel ? "on" : "") + '" onclick="pick(' + x.id + ')">' + esc(x.name) + '</button>';
-  }).join("") + '</div><div class="row" style="align-items:center;margin:0"><button class="ghost" onclick="shiftCal(-1)">◀</button>' +
+  return h + '<div class="card"><b>History</b><div class="chips">' + HB.map(function(x){
+    return '<button class="' + (x[0] === hSel ? "on" : "") + '" onclick="pick(\'' + x[0] + '\')">' + x[1] + '</button>';
+  }).join("") + '</div><div class="row" style="align-items:center;margin:0"><button class="ghost" onclick="shiftCal(-1)">\u25c0</button>' +
   '<div style="text-align:center"><b style="font-size:16px">' + name + '</b><small>' + count + ' / ' + n + ' days</small></div>' +
-  '<button class="ghost" onclick="shiftCal(1)">▶</button></div><div class="cal">' + cells + '</div></div>';
+  '<button class="ghost" onclick="shiftCal(1)">\u25b6</button></div><div class="cal">' + cells + '</div></div>';
 }
 
 function accounts(){
@@ -335,6 +361,21 @@ function render(){
   el("app").innerHTML = screens[tab]();
   document.querySelectorAll("nav button").forEach(function(b){ b.classList.toggle("on", b.dataset.t === tab); });
 }
+// ===== PART 7: ADD FROM A LINK (used by the Apple Pay shortcut) =====
+(function(){
+  try {
+    var q = new URLSearchParams(location.search), a = parseFloat(q.get("amt"));
+    if (a > 0) {                                   // ignores blank / zero payments
+      var note = (q.get("note") || "").trim() || "Apple Pay", id = acct(q.get("acct") || "applepay").id;
+      var dup = S.tx.some(function(t){ return t.src === "url" && t.amt === a && t.note === note && Date.now() - t.id < 60000; });
+      if (!dup) {                                  // skips a double-fire within 60 seconds
+        S.tx.push({ id: Date.now(), type: "expense", amt: a, acct: id, cat: EX.indexOf(q.get("cat")) >= 0 ? q.get("cat") : "Other", note: note, date: ds(new Date()), src: "url" });
+        save();
+      }
+    }
+    if (location.search) history.replaceState(null, "", location.pathname);   // clears the link so a refresh can't add it twice
+  } catch(e){}
+})();
 render();
 </script>
 </body>
