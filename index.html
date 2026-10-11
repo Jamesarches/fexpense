@@ -270,29 +270,49 @@ function payM(id){
   save(); render();
 }
 function addM(){
-  var n = el("mname").value.trim(), a = parseFloat(el("mamt").value);
+  var n = el("mname").value.trim(), a = parseFloat(el("mamt").value), dv = el("mday").value.trim(), d = parseInt(dv, 10);
   if (!n || !(a > 0)) { alert("Enter a name and amount"); return; }
-  S.monthly.push({ id: Date.now(), name: n, amt: a, accts: [el("macc").value] }); save(); render();
+  if (dv && !(d >= 1 && d <= 31)) { alert("Due day must be 1 to 31"); return; }
+  S.monthly.push({ id: Date.now(), name: n, amt: a, accts: [el("macc").value], day: dv ? d : null }); save(); render();
 }
+var medit = false;                                  // edit mode for due dates (bottom of the tab)
+function ord(n){ var s = ["th","st","nd","rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
+function dueDay(m){ var t = new Date(); return Math.min(m.day, new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate()); }   // day 31 -> last day in short months
+function setDay(id, fromEdit){                      // saves the due day; after this it is locked unless you use Edit
+  var m = S.monthly.find(function(x){ return x.id === id; }), inp = el((fromEdit ? "me" : "md") + id);
+  var d = parseInt(inp && inp.value, 10);
+  if (!m || !(d >= 1 && d <= 31)) { alert("Enter a day from 1 to 31"); return; }
+  m.day = d; save(); render();
+}
+function toggleEdit(){ medit = !medit; render(); }
 function delM(id){ S.monthly = S.monthly.filter(function(m){ return m.id !== id; }); save(); render(); }
 function monthlyView(){
-  var open = [], done = [];
+  var open = [], done = [], today = new Date().getDate();
   S.monthly.forEach(function(m){ var p = paidThisMonth(m); (p ? done : open).push({ m: m, p: p }); });
+  open.sort(function(a, b){ return (a.m.day || 99) - (b.m.day || 99); });   // soonest due first
   var left = open.reduce(function(s, x){ return s + x.m.amt; }, 0);
   var mn = new Date().toLocaleString("default", { month: "long" });
   function row(x){
-    var m = x.m, multi = m.accts.length > 1 && !x.p;
+    var m = x.m, multi = m.accts.length > 1 && !x.p, over = !x.p && m.day && today > dueDay(m);
     var third = x.p ? an(x.p.acct) + ' \u00b7 Paid ' + x.p.date : an(m.accts[0]);
+    var due = m.day ? '<small' + (over ? ' class="r"' : '') + '>Every ' + ord(m.day) + (over ? ' \u00b7 overdue' : '') + '</small>'
+      : (x.p ? '' : '<div class="row2" style="margin-top:6px"><input id="md' + m.id + '" type="number" inputmode="numeric" min="1" max="31" placeholder="Due day" style="width:96px;padding:6px 0"><button class="ghost" onclick="setDay(' + m.id + ')">Set</button></div>');
     return '<div class="item">' + badge(x.p ? x.p.acct : m.accts[0]) + '<div><b>' + esc(m.name) + '</b><small>' + money(m.amt) + '</small>' +
-      (multi ? '<select id="ma' + m.id + '" style="margin:2px 0 0;padding:4px 0;font-size:13px">' + m.accts.map(function(a){ return '<option value="' + a + '">' + an(a) + '</option>'; }).join("") + '</select>' : '<small>' + third + '</small>') + '</div>' +
+      (multi ? '<select id="ma' + m.id + '" style="margin:2px 0 0;padding:4px 0;font-size:13px">' + m.accts.map(function(a){ return '<option value="' + a + '">' + an(a) + '</option>'; }).join("") + '</select>' : '<small>' + third + '</small>') + due + '</div>' +
       (x.p ? '' : '<button onclick="payM(' + m.id + ')">Pay</button>') + '<button class="x" onclick="delM(' + m.id + ')">\u2715</button></div>';
   }
+  var editCard = medit ? '<div class="card"><b>Edit due dates</b>' + S.monthly.map(function(m){
+    return '<div class="item"><div><b>' + esc(m.name) + '</b><small>' + (m.day ? 'Every ' + ord(m.day) : 'Not set') + '</small></div>' +
+      '<input id="me' + m.id + '" type="number" inputmode="numeric" min="1" max="31" value="' + (m.day || '') + '" placeholder="Day" style="width:70px;margin:0;text-align:center"><button class="ghost" onclick="setDay(' + m.id + ',1)">Save</button></div>';
+  }).join("") + '</div>' : '';
   return '<h1>Monthly</h1><div class="card" style="border:0"><small>Left to pay in ' + mn + '</small><b style="font-size:28px;font-weight:300">' + money(left) + '</b>' +
   '<small>' + open.length + ' unpaid \u00b7 ' + done.length + ' paid</small></div>' +
   '<div class="card"><b>Not paid yet</b>' + (open.map(row).join("") || '<small>All paid for this month.</small>') + '</div>' +
   (done.length ? '<div class="card"><b>Paid this month</b>' + done.map(row).join("") + '</div>' : '') +
   '<div class="card"><b>Add monthly payment</b><input id="mname" placeholder="Name (e.g. Netflix)"><input id="mamt" type="number" inputmode="decimal" placeholder="Amount">' +
-  '<small style="margin-top:12px">Pay from</small><select id="macc">' + accOpts() + '</select><div class="row2"><button style="width:100%" onclick="addM()">Add</button></div></div>';
+  '<input id="mday" type="number" inputmode="numeric" min="1" max="31" placeholder="Due day of the month (1-31)">' +
+  '<small style="margin-top:12px">Pay from</small><select id="macc">' + accOpts() + '</select><div class="row2"><button style="width:100%" onclick="addM()">Add</button></div></div>' +
+  editCard + '<div style="text-align:center;margin:6px 0 12px"><button class="ghost" onclick="toggleEdit()">' + (medit ? "Done" : "Edit due dates") + '</button></div>';
 }
 var fsub = "over";
 function setF(v){ fsub = v; render(); }
