@@ -100,6 +100,7 @@ function load(){                                  // read saved data from the ph
     { id: "unionbank", name: "UnionBank", s: "UB", c: "#f26b21", open: 0 }
   ];
   if (!d.unpaid) d.unpaid = [];
+  if (!d.owed) d.owed = [];
   if (!d.accts.some(function(a){ return a.id === "applepay"; })) d.accts.push({ id: "applepay", name: "Apple Pay", s: "Pay", c: "#ffffff", open: 0 });
   if (!d.accts.some(function(a){ return a.id === "cash"; })) d.accts.push({ id: "cash", name: "Cash", s: "Cash", c: "#8fcfa9", open: 0 });
   d.accts.forEach(function(a){ if (a.id === "cash") a.name = "Cash"; if (a.id === "applepay") a.link = "unionbank"; });
@@ -171,7 +172,8 @@ function transfer(){
 }
 var hf = "all";
 function setHf(v){ hf = v; render(); }
-function del(id){ var d0 = S.tx.find(function(t){ return t.id === id; }); if (d0 && d0.uid) S.unpaid.forEach(function(u){ if (u.id === d0.uid) { u.part = Math.max(0, Math.round(((u.part || 0) - d0.amt) * 100) / 100); u.paid = false; u.paidOn = ""; } }); S.tx = S.tx.filter(function(t){ return t.id !== id; }); save(); render(); }
+function del(id){ var d0 = S.tx.find(function(t){ return t.id === id; }); if (d0 && d0.uid) S.unpaid.forEach(function(u){ if (u.id === d0.uid) { u.part = Math.max(0, Math.round(((u.part || 0) - d0.amt) * 100) / 100); u.paid = false; u.paidOn = ""; } }); if (d0 && d0.oid) S.owed.forEach(function(o){ if (o.id === d0.oid) { o.part = Math.max(0, Math.round(((o.part || 0) - d0.amt) * 100) / 100); o.paid = false; o.paidOn = ""; } });
+  S.tx = S.tx.filter(function(t){ return t.id !== id; }); save(); render(); }
 var HB = [["pickle","Pickleball"],["basket","Basketball"],["jog","Jog"],["gym","Gym"]];
 function cnt(k, d){ return (S.hc[k] && S.hc[k][d]) || 0; }
 function bump(k, n){                          // + / - on today's counter
@@ -314,6 +316,50 @@ function monthlyView(){
   '<small style="margin-top:12px">Pay from</small><select id="macc">' + accOpts() + '</select><div class="row2"><button style="width:100%" onclick="addM()">Add</button></div></div>' +
   editCard + '<div style="text-align:center;margin:6px 0 12px"><button class="ghost" onclick="toggleEdit()">' + (medit ? "Done" : "Edit due dates") + '</button></div>';
 }
+// ===== OWED TO ME (people who still need to pay you) =====
+function owedLeft(){ return S.owed.filter(function(o){ return !o.paid; }).reduce(function(s, o){ return s + o.amt - (o.part || 0); }, 0); }
+function addO(){
+  var n = el("oname").value.trim(), a = parseFloat(el("oamt").value);
+  if (!n || !(a > 0)) { alert("Enter a name and amount"); return; }
+  S.owed.push({ id: Date.now(), name: n, amt: a, acct: el("oacc").value, date: el("odt").value || ds(new Date()), part: 0, paid: false, paidOn: "" });
+  save(); render();
+}
+function recv(id, x){   // someone paid you: adds the money to the chosen account and logs it as income
+  var o = S.owed.find(function(v){ return v.id === id; }); if (!o) return;
+  var left = Math.round((o.amt - (o.part || 0)) * 100) / 100, a = x && x < left ? x : left, t = ds(new Date());
+  S.tx.push({ id: Date.now(), type: "income", amt: a, acct: o.acct, cat: "Paid back", note: o.name, date: t, oid: id });
+  o.part = Math.round(((o.part || 0) + a) * 100) / 100;
+  if (o.part >= o.amt - 0.005) { o.paid = true; o.paidOn = t; }
+  save(); render();
+}
+function recvPart(id){
+  var o = S.owed.find(function(v){ return v.id === id; }); if (!o) return;
+  var left = Math.round((o.amt - (o.part || 0)) * 100) / 100, v = prompt("Amount received now (" + money(left) + " left)");
+  if (v === null) return;
+  var x = parseFloat(v);
+  if (!(x > 0)) { alert("Enter an amount"); return; }
+  recv(id, x);
+}
+function delO(id){ S.owed = S.owed.filter(function(o){ return o.id !== id; }); save(); render(); }
+function owedView(){
+  var t = ds(new Date());
+  var open = S.owed.filter(function(o){ return !o.paid; }).sort(function(a, b){ return a.date.localeCompare(b.date); });
+  var done = S.owed.filter(function(o){ return o.paid; }).sort(function(a, b){ return b.paidOn.localeCompare(a.paidOn); });
+  function row(o){
+    var late = !o.paid && o.date < t;
+    return '<div class="item">' + badge(o.acct) + '<div><b>' + esc(o.name) + '</b><small>' + (!o.paid && o.part ? money(o.amt - o.part) + ' left of ' + money(o.amt) : money(o.amt)) + '</small>' +
+      '<small' + (late ? ' class="r"' : '') + '>' + (o.paid ? 'Paid ' + o.paidOn : 'Expected ' + o.date + (late ? ' \u00b7 overdue' : '')) + '</small></div>' +
+      (o.paid ? '' : '<button class="ghost" onclick="recvPart(' + o.id + ')">Part</button><button onclick="recv(' + o.id + ')">Paid</button>') +
+      '<button class="x" onclick="delO(' + o.id + ')">\u2715</button></div>';
+  }
+  return '<div class="card" style="border:0"><small>Owed to you</small><b style="font-size:28px;font-weight:300">' + money(owedLeft()) + '</b></div>' +
+  '<div class="card"><b>Add</b><input id="oname" placeholder="Who owes you"><input id="oamt" type="number" inputmode="decimal" placeholder="Amount">' +
+  '<small style="margin-top:12px">Receive to</small><select id="oacc">' + accOpts("cash") + '</select>' +
+  '<small style="margin-top:12px">Expected date</small><input id="odt" type="date" value="' + t + '">' +
+  '<div class="row2"><button style="width:100%" onclick="addO()">Add</button></div></div>' +
+  '<div class="card"><b>Waiting</b>' + (open.map(row).join("") || '<small>Nobody owes you right now.</small>') + '</div>' +
+  (done.length ? '<div class="card"><b>Received</b>' + done.map(row).join("") + '</div>' : '');
+}
 var fsub = "over";
 function setF(v){ fsub = v; render(); }
 function addU(){
@@ -359,17 +405,18 @@ function unpaidView(){
   (done.length ? '<div class="card"><b>Paid</b>' + done.map(row).join("") + '</div>' : '');
 }
 function home(){
-  var n = S.unpaid.filter(function(u){ return !u.paid; }).length;
+  var n = S.unpaid.filter(function(u){ return !u.paid; }).length, no = S.owed.filter(function(o){ return !o.paid; }).length;
   return '<h1>Fuck</h1><div class="seg"><button class="' + (fsub === "over" ? "on" : "") + '" onclick="setF(\'over\')">Overview</button>' +
-    '<button class="' + (fsub === "unpaid" ? "on" : "") + '" onclick="setF(\'unpaid\')">Unpaid' + (n ? ' (' + n + ')' : '') + '</button></div>' +
-    (fsub === "unpaid" ? unpaidView() : impBtn() + homeMain());
+    '<button class="' + (fsub === "unpaid" ? "on" : "") + '" onclick="setF(\'unpaid\')">Unpaid' + (n ? ' (' + n + ')' : '') + '</button>' +
+    '<button class="' + (fsub === "owed" ? "on" : "") + '" onclick="setF(\'owed\')">Owed' + (no ? ' (' + no + ')' : '') + '</button></div>' +
+    (fsub === "unpaid" ? unpaidView() : fsub === "owed" ? owedView() : impBtn() + homeMain());
 }
 function homeMain(){
   var m = monthTx(), inc = sum(m,"income"), exp = sum(m,"expense");
   var cats = type === "expense" ? EX : IN;
   var list = m.slice().sort(function(a,b){ return b.date.localeCompare(a.date) || b.id - a.id; }).map(txRow).join("");
   return '<div class="card" style="border:0"><div class="row"><div><small>Income</small><b class="g">' + money(inc) + '</b></div>' +
-  '<div><small>Spent</small><b class="r">' + money(exp) + '</b></div><div><small>Balance</small><b>' + money(inc - exp) + '</b></div></div>' +
+  '<div><small>Spent</small><b class="r">' + money(exp) + '</b></div><div><small>Balance</small><b>' + money(inc - exp) + '</b></div></div>' + (owedLeft() ? '<small>Owed to you ' + money(owedLeft()) + '</small>' : '') +
   '</div>' +
   '<div class="card"><div class="seg"><button class="' + (type === "expense" ? "on" : "") + '" onclick="setType(\'expense\')">Expense</button>' +
   '<button class="' + (type === "income" ? "on" : "") + '" onclick="setType(\'income\')">Income</button></div>' +
