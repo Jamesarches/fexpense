@@ -60,11 +60,10 @@ button.red{background:transparent;color:var(--bad);border:1px solid var(--bad)}
 .bdg{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;border:1px solid #444;color:#ddd;font-weight:500;font-size:9px;flex:none}
 .bdg.big{width:44px;height:44px;font-size:10px}
 nav{position:fixed;left:0;right:0;bottom:0;display:flex;background:rgba(0,0,0,.92);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px)}
-nav button{flex:1;background:transparent;color:var(--mut);border-radius:0;padding:16px 0 14px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;font-weight:400}
+nav button{flex:1;background:transparent;color:var(--mut);border-radius:0;padding:16px 0 14px;font-size:9px;letter-spacing:.04em;text-transform:uppercase;font-weight:400}
 nav button.on{color:#fff}
 nav{align-items:center}
-nav button[data-t=accounts],nav button[data-t=charts]{flex:1.5}
-nav button[data-t=home]{flex:1.8;margin:8px 4px;padding:14px 0;font-size:15px;font-weight:600;letter-spacing:.14em;color:#fff;border:1px solid #fff;border-radius:14px}
+nav button[data-t=home]{flex:1.6;margin:8px 3px;padding:14px 0;font-size:15px;font-weight:600;letter-spacing:.14em;color:#fff;border:1px solid #fff;border-radius:14px}
 nav button[data-t=home].on{background:#fff;color:#000}
 .imp{display:inline-block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer}
 .step{width:34px;height:34px;border-radius:50%;background:transparent;border:1px solid #444;color:#fff;padding:0;font-size:18px;line-height:1}
@@ -76,9 +75,10 @@ nav button[data-t=home].on{background:#fff;color:#000}
 <nav>
 <button data-t="history" onclick="setTab('history')">History</button>
 <button data-t="daily" onclick="setTab('daily')">Daily</button>
-<button data-t="habits" onclick="setTab('habits')">Habits</button>
+<button data-t="monthly" onclick="setTab('monthly')">Monthly</button>
 <button data-t="home" onclick="setTab('home')">Fuck</button>
-<button data-t="accounts" onclick="setTab('accounts')">Accounts</button>
+<button data-t="habits" onclick="setTab('habits')">Habits</button>
+<button data-t="accounts" onclick="setTab('accounts')">Wallets</button>
 <button data-t="charts" onclick="setTab('charts')">Charts</button>
 </nav>
 
@@ -103,6 +103,12 @@ function load(){                                  // read saved data from the ph
   if (!d.accts.some(function(a){ return a.id === "applepay"; })) d.accts.push({ id: "applepay", name: "Apple Pay", s: "Pay", c: "#ffffff", open: 0 });
   if (!d.accts.some(function(a){ return a.id === "cash"; })) d.accts.push({ id: "cash", name: "Cash", s: "Cash", c: "#8fcfa9", open: 0 });
   d.accts.forEach(function(a){ if (a.id === "cash") a.name = "Cash"; if (a.id === "applepay") a.link = "unionbank"; });
+  if (!d.monthly) d.monthly = [   // accts = which bank / e-wallet pays it (first one is the default)
+    { id: 101, name: "iCloud", amt: 59, accts: ["gcash"] },
+    { id: 102, name: "Spotify", amt: 279, accts: ["rcbc"] },
+    { id: 103, name: "Mother allowance", amt: 2500, accts: ["rcbc"] },
+    { id: 104, name: "Vape", amt: 1000, accts: ["gcash", "cash"] }
+  ];
   if (!d.hc) d.hc = {};
   if (!d.foods) d.foods = [];
   if (!d.weights) d.weights = [{ id: 1, date: ds(new Date()), kg: 86 }];
@@ -253,6 +259,40 @@ function restore(inp){   // loads a backup file and replaces the current data
     inp.value = "";
   };
   r.readAsText(f);
+}
+// ===== MONTHLY PAYMENTS (resets every month by itself) =====
+function paidThisMonth(m){ var mo = ds(new Date()).slice(0,7); return S.tx.find(function(t){ return t.mid === m.id && t.date.slice(0,7) === mo; }); }
+function payM(id){
+  var m = S.monthly.find(function(x){ return x.id === id; }); if (!m || paidThisMonth(m)) return;
+  var sel = el("ma" + id), a = sel ? sel.value : m.accts[0], b = bal(a);
+  if (b < m.amt && !confirm(an(a) + " balance is " + money(b) + ". Pay anyway?")) return;
+  S.tx.push({ id: Date.now(), type: "expense", amt: m.amt, acct: a, cat: "Bills", note: m.name, date: ds(new Date()), mid: id });
+  save(); render();
+}
+function addM(){
+  var n = el("mname").value.trim(), a = parseFloat(el("mamt").value);
+  if (!n || !(a > 0)) { alert("Enter a name and amount"); return; }
+  S.monthly.push({ id: Date.now(), name: n, amt: a, accts: [el("macc").value] }); save(); render();
+}
+function delM(id){ S.monthly = S.monthly.filter(function(m){ return m.id !== id; }); save(); render(); }
+function monthlyView(){
+  var open = [], done = [];
+  S.monthly.forEach(function(m){ var p = paidThisMonth(m); (p ? done : open).push({ m: m, p: p }); });
+  var left = open.reduce(function(s, x){ return s + x.m.amt; }, 0);
+  var mn = new Date().toLocaleString("default", { month: "long" });
+  function row(x){
+    var m = x.m, multi = m.accts.length > 1 && !x.p;
+    var third = x.p ? an(x.p.acct) + ' \u00b7 Paid ' + x.p.date : an(m.accts[0]);
+    return '<div class="item">' + badge(x.p ? x.p.acct : m.accts[0]) + '<div><b>' + esc(m.name) + '</b><small>' + money(m.amt) + '</small>' +
+      (multi ? '<select id="ma' + m.id + '" style="margin:2px 0 0;padding:4px 0;font-size:13px">' + m.accts.map(function(a){ return '<option value="' + a + '">' + an(a) + '</option>'; }).join("") + '</select>' : '<small>' + third + '</small>') + '</div>' +
+      (x.p ? '' : '<button onclick="payM(' + m.id + ')">Pay</button>') + '<button class="x" onclick="delM(' + m.id + ')">\u2715</button></div>';
+  }
+  return '<h1>Monthly</h1><div class="card" style="border:0"><small>Left to pay in ' + mn + '</small><b style="font-size:28px;font-weight:300">' + money(left) + '</b>' +
+  '<small>' + open.length + ' unpaid \u00b7 ' + done.length + ' paid</small></div>' +
+  '<div class="card"><b>Not paid yet</b>' + (open.map(row).join("") || '<small>All paid for this month.</small>') + '</div>' +
+  (done.length ? '<div class="card"><b>Paid this month</b>' + done.map(row).join("") + '</div>' : '') +
+  '<div class="card"><b>Add monthly payment</b><input id="mname" placeholder="Name (e.g. Netflix)"><input id="mamt" type="number" inputmode="decimal" placeholder="Amount">' +
+  '<small style="margin-top:12px">Pay from</small><select id="macc">' + accOpts() + '</select><div class="row2"><button style="width:100%" onclick="addM()">Add</button></div></div>';
 }
 var fsub = "over";
 function setF(v){ fsub = v; render(); }
@@ -428,7 +468,7 @@ function charts(){
 
 // ===== PART 6: DRAW THE SCREEN =====
 function render(){
-  var screens = { home: home, accounts: accounts, history: historyScreen, daily: daily, habits: habits, charts: charts };
+  var screens = { home: home, monthly: monthlyView, accounts: accounts, history: historyScreen, daily: daily, habits: habits, charts: charts };
   el("app").innerHTML = screens[tab]();
   document.querySelectorAll("nav button").forEach(function(b){ b.classList.toggle("on", b.dataset.t === tab); });
 }
