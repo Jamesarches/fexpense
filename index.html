@@ -67,6 +67,8 @@ nav button[data-t=home]{flex:1.6;margin:8px 3px;padding:14px 0;font-size:15px;fo
 nav button[data-t=home].on{background:#fff;color:#000}
 .imp{display:inline-block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer}
 .step{width:34px;height:34px;border-radius:50%;background:transparent;border:1px solid #444;color:#fff;padding:0;font-size:18px;line-height:1}
+.chips.wrap{flex-wrap:wrap;gap:2px 18px;overflow:visible}
+.chips.wrap button{flex:none;white-space:nowrap;font-size:12px;padding:6px 0}
 </style>
 </head>
 <body>
@@ -103,7 +105,12 @@ function load(){                                  // read saved data from the ph
   if (!d.owed) d.owed = [];
   if (!d.accts.some(function(a){ return a.id === "applepay"; })) d.accts.push({ id: "applepay", name: "Apple Pay", s: "Pay", c: "#ffffff", open: 0 });
   if (!d.accts.some(function(a){ return a.id === "cash"; })) d.accts.push({ id: "cash", name: "Cash", s: "Cash", c: "#8fcfa9", open: 0 });
-  d.accts.forEach(function(a){ if (a.id === "cash") a.name = "Cash"; if (a.id === "applepay") a.link = "unionbank"; });
+  if (!d.accts.some(function(a){ return a.id === "cashsave"; })) d.accts.push({ id: "cashsave", name: "Cash Saving", s: "Save", c: "#7aa2ff", open: 0 });
+  d.accts.forEach(function(a){
+    if (a.id === "cash") a.name = "Cash";
+    if (a.id === "applepay") a.link = "unionbank";
+    if (a.id === "bpi") { a.name = "BPI"; a.s = "BPI"; a.c = "#b0121b"; }   // BPI keeps its own name
+  });
   if (!d.monthly) d.monthly = [   // accts = which bank / e-wallet pays it (first one is the default)
     { id: 101, name: "iCloud", amt: 59, accts: ["gcash"] },
     { id: 102, name: "Spotify", amt: 279, accts: ["rcbc"] },
@@ -198,11 +205,15 @@ function pick(k){ hSel = k; render(); }
 function shiftCal(n){ cal = new Date(cal.getFullYear(), cal.getMonth() + n, 1); render(); }
 
 // ===== PART 5: SCREENS (builds the HTML for each tab) =====
+function sd(d){   // short date: "Oct 11" (adds the year only when it is not this year)
+  var x = new Date(d + "T00:00:00"); if (isNaN(x)) return d;
+  return x.toLocaleString("default", { month: "short", day: "numeric" }) + (x.getFullYear() !== new Date().getFullYear() ? " " + x.getFullYear() : "");
+}
 function txRow(t){
   var tr = t.type === "transfer", adj = t.type === "adj", inc = t.type === "income";
   var pos = inc || (adj && t.amt > 0), amt = Math.abs(t.amt);
   var title = tr ? an(t.from) + " → " + an(t.to) : adj ? (t.amt > 0 ? "Added money" : "Deducted money") : (t.note || t.cat);
-  var sub = (tr ? "Transfer" : an(t.acct)) + (t.note && (tr || adj) ? " · " + esc(t.note) : "") + (inc || t.type === "expense" ? " · " + t.cat : "") + " · " + t.date;
+  var sub = (tr ? "Transfer" : an(t.acct)) + (t.note && (tr || adj) ? " · " + esc(t.note) : "") + (inc || t.type === "expense" ? " · " + t.cat : "") + " · " + sd(t.date);
   return '<div class="item">' + (tr ? '<span class="bdg" style="background:#555">⇄</span>' : badge(t.acct)) + '<div><b>' + esc(title) + '</b><small>' + sub + '</small></div>' +
     '<span class="' + (tr ? "" : pos ? "g" : "r") + '">' + (tr ? "" : pos ? "+" : "-") + money(amt) + '</span>' +
     '<button class="x" onclick="del(' + t.id + ')">✕</button></div>';
@@ -231,21 +242,29 @@ function importAP(inp){   // reads the shortcut's text file; each payment line l
   r.readAsText(f);
 }
 function backupCard(){
-  return '<div class="card"><b>Backup</b><small>Last backup: ' + (S.lastBackup || "never") + '</small>' +
+  return '<div class="card"><b>Backup</b><small>Last backup: ' + (S.lastBackup || "never") + ' \u00b7 file: FExpense-backup.json</small>' +
   '<div class="row2"><button style="flex:1" onclick="backup()">Save backup</button>' +
   '<label class="imp" style="flex:1;text-align:center;padding:12px 0">Restore<input type="file" accept=".json,application/json,text/plain" onchange="restore(this)" hidden></label></div></div>';
 }
-function backup(){   // saves ALL your data to a file you can keep in Files / iCloud
-  S.lastBackup = ds(new Date()); save();
-  var name = "FExpense-backup-" + S.lastBackup + ".json", text = JSON.stringify(S, null, 1);
-  var file = new File([text], name, { type: "application/json" });
+function backupDue(){   // true when it's been 7+ days since the last saved backup (or never, and you have data)
+  if (!S.tx.length && !S.unpaid.length && !S.owed.length && !S.foods.length && !Object.keys(S.hc).length) return false;   // nothing entered yet
+  if (!S.lastBackup) return true;
+  return (new Date(ds(new Date())) - new Date(S.lastBackup)) / 864e5 >= 7;
+}
+function bkBanner(){
+  return '<div style="display:flex;justify-content:space-between;align-items:center;border:1px solid var(--line);border-radius:10px;padding:6px 6px 6px 14px;margin:12px 0 0"><small style="color:var(--tx)">Weekly backup due</small><button class="ghost" style="color:#fff" onclick="backup()">Save</button></div>';
+}
+function backup(){   // always the same file name, so saving to Files can REPLACE the old backup instead of adding a new one
+  var today = ds(new Date()), name = "FExpense-backup.json";
+  var snap = JSON.parse(JSON.stringify(S)); snap.lastBackup = today;
+  var file = new File([JSON.stringify(snap, null, 1)], name, { type: "application/json" });
+  function done(){ S.lastBackup = today; save(); render(); }
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    navigator.share({ files: [file], title: name }).catch(function(){});   // opens the share sheet: choose Save to Files
+    navigator.share({ files: [file], title: name }).then(done).catch(function(){});   // only counts as saved if you finish the share
   } else {
     var a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name;
-    document.body.appendChild(a); a.click(); a.remove();
+    document.body.appendChild(a); a.click(); a.remove(); done();
   }
-  render();
 }
 function restore(inp){   // loads a backup file and replaces the current data
   var f = inp.files && inp.files[0]; if (!f) return;
@@ -317,6 +336,11 @@ function monthlyView(){
   editCard + '<div style="text-align:center;margin:6px 0 12px"><button class="ghost" onclick="toggleEdit()">' + (medit ? "Done" : "Edit due dates") + '</button></div>';
 }
 // ===== OWED TO ME (people who still need to pay you) =====
+function savingRow(){   // overview: Saving = your BPI balance (+ any cash you keep as savings)
+  var a = bal("bpi"), c = bal("cashsave");
+  return '<div class="row" style="margin:0 0 6px"><div><small>Saving</small><b>' + money(a + c) + '</b></div></div>' +
+    '<small>BPI ' + money(a) + (c ? ' \u00b7 Cash ' + money(c) : '') + '</small>';
+}
 function owedLeft(){ return S.owed.filter(function(o){ return !o.paid; }).reduce(function(s, o){ return s + o.amt - (o.part || 0); }, 0); }
 function addO(){
   var n = el("oname").value.trim(), a = parseFloat(el("oamt").value);
@@ -365,7 +389,7 @@ function setF(v){ fsub = v; render(); }
 function addU(){
   var n = el("uname").value.trim(), a = parseFloat(el("uamt").value);
   if (!n || !(a > 0)) { alert("Enter a name and amount"); return; }
-  S.unpaid.push({ id: Date.now(), name: n, amt: a, acct: el("uacc").value, date: el("udt").value || ds(new Date()), paid: false, paidOn: "" });
+  S.unpaid.push({ id: Date.now(), name: n, amt: a, acct: el("uacc").value, date: el("udt").value || ds(new Date()), note: el("unote").value.trim(), paid: false, paidOn: "" });
   save(); render();
 }
 function pay(id, x){   // pays what is left (or a smaller amount x): deducts from the bank/e-wallet and logs it
@@ -385,6 +409,8 @@ function payPart(id){   // the "Part" button: asks how much to pay now
   if (v === null) return;
   var x = parseFloat(v);
   if (!(x > 0)) { alert("Enter an amount"); return; }
+  var nv = prompt("Note (optional)", u.note || "");   // the note can only be changed here, when paying a part
+  if (nv !== null) u.note = nv.trim();
   pay(id, x);
 }
 function delU(id){ S.unpaid = S.unpaid.filter(function(u){ return u.id !== id; }); save(); render(); }
@@ -393,11 +419,12 @@ function unpaidView(){
   var done = S.unpaid.filter(function(u){ return u.paid; }).sort(function(a, b){ return b.paidOn.localeCompare(a.paidOn); });
   var tot = open.reduce(function(s, u){ return s + u.amt - (u.part || 0); }, 0);
   function row(u){
-    return '<div class="item">' + badge(u.acct) + '<div><b>' + esc(u.name) + '</b><small>' + (!u.paid && u.part ? money(u.amt - u.part) + ' left of ' + money(u.amt) : money(u.amt)) + '</small><small>' + (u.paid ? 'Paid ' + u.paidOn : 'Due ' + u.date) + '</small></div>' +
+    return '<div class="item">' + badge(u.acct) + '<div><b>' + esc(u.name) + '</b><small>' + (!u.paid && u.part ? money(u.amt - u.part) + ' left of ' + money(u.amt) : money(u.amt)) + '</small><small>' + (u.paid ? 'Paid ' + u.paidOn : 'Due ' + u.date) + '</small>' +
+      (u.note ? '<small style="font-size:11px;opacity:.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(u.note) + '</small>' : '') + '</div>' +
       (u.paid ? '' : '<button class="ghost" onclick="payPart(' + u.id + ')">Part</button><button onclick="pay(' + u.id + ')">Pay</button>') + '<button class="x" onclick="delU(' + u.id + ')">✕</button></div>';
   }
   return '<div class="card" style="border:0"><small>Total unpaid</small><b style="font-size:28px;font-weight:300">' + money(tot) + '</b></div>' +
-  '<div class="card"><b>Add unpaid</b><input id="uname" placeholder="Name (e.g. Internet bill)"><input id="uamt" type="number" inputmode="decimal" placeholder="Amount">' +
+  '<div class="card"><b>Add unpaid</b><input id="uname" placeholder="Name (e.g. Internet bill)"><input id="uamt" type="number" inputmode="decimal" placeholder="Amount"><input id="unote" placeholder="Note (optional)" maxlength="80">' +
   '<small style="margin-top:12px">Pay from</small><select id="uacc">' + accOpts() + '</select>' +
   '<small style="margin-top:12px">Pay date</small><input id="udt" type="date" value="' + ds(new Date()) + '">' +
   '<div class="row2"><button style="width:100%" onclick="addU()">Add</button></div></div>' +
@@ -416,7 +443,7 @@ function homeMain(){
   var cats = type === "expense" ? EX : IN;
   var list = m.slice().sort(function(a,b){ return b.date.localeCompare(a.date) || b.id - a.id; }).map(txRow).join("");
   return '<div class="card" style="border:0"><div class="row"><div><small>Income</small><b class="g">' + money(inc) + '</b></div>' +
-  '<div><small>Spent</small><b class="r">' + money(exp) + '</b></div><div><small>Balance</small><b>' + money(inc - exp) + '</b></div></div>' + (owedLeft() ? '<small>Owed to you ' + money(owedLeft()) + '</small>' : '') +
+  '<div><small>Spent</small><b class="r">' + money(exp) + '</b></div><div><small>Balance</small><b>' + money(inc - exp) + '</b></div></div>' + savingRow() + (owedLeft() ? '<small>Owed to you ' + money(owedLeft()) + '</small>' : '') +
   '</div>' +
   '<div class="card"><div class="seg"><button class="' + (type === "expense" ? "on" : "") + '" onclick="setType(\'expense\')">Expense</button>' +
   '<button class="' + (type === "income" ? "on" : "") + '" onclick="setType(\'income\')">Income</button></div>' +
@@ -505,7 +532,7 @@ function historyScreen(){
   var chips = '<button class="' + (hf === "all" ? "on" : "") + '" onclick="setHf(\'all\')">All</button>' + S.accts.map(function(a){
     return '<button class="' + (hf === a.id ? "on" : "") + '" onclick="setHf(\'' + a.id + '\')">' + a.name + '</button>';
   }).join("");
-  return '<h1>History</h1><div class="chips">' + chips + '</div><div class="card">' + (list.map(txRow).join("") || '<small>No transactions yet.</small>') + '</div>';
+  return '<h1>History</h1><div class="chips wrap">' + chips + '</div><div class="card" style="border:0;padding:0">' + (list.map(txRow).join("") || '<small>No transactions yet.</small>') + '</div>';
 }
 
 function charts(){
@@ -536,7 +563,7 @@ function charts(){
 // ===== PART 6: DRAW THE SCREEN =====
 function render(){
   var screens = { home: home, monthly: monthlyView, accounts: accounts, history: historyScreen, daily: daily, habits: habits, charts: charts };
-  el("app").innerHTML = screens[tab]();
+  el("app").innerHTML = (backupDue() ? bkBanner() : "") + screens[tab]();
   document.querySelectorAll("nav button").forEach(function(b){ b.classList.toggle("on", b.dataset.t === tab); });
 }
 // ===== PART 7: ADD FROM A LINK (used by the Apple Pay shortcut) =====
