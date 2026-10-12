@@ -103,6 +103,7 @@ function load(){                                  // read saved data from the ph
   ];
   if (!d.unpaid) d.unpaid = [];
   if (!d.owed) d.owed = [];
+  if (!d.borrowed) d.borrowed = [];
   if (!d.accts.some(function(a){ return a.id === "applepay"; })) d.accts.push({ id: "applepay", name: "Apple Pay", s: "Pay", c: "#ffffff", open: 0 });
   if (!d.accts.some(function(a){ return a.id === "cash"; })) d.accts.push({ id: "cash", name: "Cash", s: "Cash", c: "#8fcfa9", open: 0 });
   if (!d.accts.some(function(a){ return a.id === "cashsave"; })) d.accts.push({ id: "cashsave", name: "Cash Saving", s: "Save", c: "#7aa2ff", open: 0 });
@@ -179,7 +180,11 @@ function transfer(){
 }
 var hf = "all";
 function setHf(v){ hf = v; render(); }
-function del(id){ var d0 = S.tx.find(function(t){ return t.id === id; }); if (d0 && d0.uid) S.unpaid.forEach(function(u){ if (u.id === d0.uid) { u.part = Math.max(0, Math.round(((u.part || 0) - d0.amt) * 100) / 100); u.paid = false; u.paidOn = ""; } }); if (d0 && d0.oid) S.owed.forEach(function(o){ if (o.id === d0.oid) { o.part = Math.max(0, Math.round(((o.part || 0) - d0.amt) * 100) / 100); o.paid = false; o.paidOn = ""; } });
+function del(id){ var d0 = S.tx.find(function(t){ return t.id === id; }); if (d0 && d0.uid) S.unpaid.forEach(function(u){ if (u.id === d0.uid) { u.part = Math.max(0, Math.round(((u.part || 0) - d0.amt) * 100) / 100); u.paid = false; u.paidOn = ""; } }); if (d0 && d0.bid) {
+    if (d0.kind === "in") { S.borrowed = S.borrowed.filter(function(b){ return b.id !== d0.bid; }); S.tx = S.tx.filter(function(t){ return t.bid !== d0.bid; }); }   // removing a borrow also removes its repayments
+    else S.borrowed.forEach(function(b){ if (b.id === d0.bid) { b.part = Math.max(0, Math.round(((b.part || 0) - Math.abs(d0.amt)) * 100) / 100); b.paid = false; b.paidOn = ""; } });
+  }
+  if (d0 && d0.oid) S.owed.forEach(function(o){ if (o.id === d0.oid) { o.part = Math.max(0, Math.round(((o.part || 0) - d0.amt) * 100) / 100); o.paid = false; o.paidOn = ""; } });
   S.tx = S.tx.filter(function(t){ return t.id !== id; }); save(); render(); }
 var HB = [["pickle","Pickleball"],["basket","Basketball"],["jog","Jog"],["gym","Gym"]];
 function cnt(k, d){ return (S.hc[k] && S.hc[k][d]) || 0; }
@@ -212,7 +217,7 @@ function sd(d){   // short date: "Oct 11" (adds the year only when it is not thi
 function txRow(t){
   var tr = t.type === "transfer", adj = t.type === "adj", inc = t.type === "income";
   var pos = inc || (adj && t.amt > 0), amt = Math.abs(t.amt);
-  var title = tr ? an(t.from) + " → " + an(t.to) : adj ? (t.amt > 0 ? "Added money" : "Deducted money") : (t.note || t.cat);
+  var title = tr ? an(t.from) + " → " + an(t.to) : adj ? (t.lbl || (t.amt > 0 ? "Added money" : "Deducted money")) : (t.note || t.cat);
   var sub = (tr ? "Transfer" : an(t.acct)) + (t.note && (tr || adj) ? " · " + esc(t.note) : "") + (inc || t.type === "expense" ? " · " + t.cat : "") + " · " + sd(t.date);
   return '<div class="item">' + (tr ? '<span class="bdg" style="background:#555">⇄</span>' : badge(t.acct)) + '<div><b>' + esc(title) + '</b><small>' + sub + '</small></div>' +
     '<span class="' + (tr ? "" : pos ? "g" : "r") + '">' + (tr ? "" : pos ? "+" : "-") + money(amt) + '</span>' +
@@ -365,7 +370,7 @@ function recvPart(id){
   recv(id, x);
 }
 function delO(id){ S.owed = S.owed.filter(function(o){ return o.id !== id; }); save(); render(); }
-function owedView(){
+function lentView(){
   var t = ds(new Date());
   var open = S.owed.filter(function(o){ return !o.paid; }).sort(function(a, b){ return a.date.localeCompare(b.date); });
   var done = S.owed.filter(function(o){ return o.paid; }).sort(function(a, b){ return b.paidOn.localeCompare(a.paidOn); });
@@ -383,6 +388,61 @@ function owedView(){
   '<div class="row2"><button style="width:100%" onclick="addO()">Add</button></div></div>' +
   '<div class="card"><b>Waiting</b>' + (open.map(row).join("") || '<small>Nobody owes you right now.</small>') + '</div>' +
   (done.length ? '<div class="card"><b>Received</b>' + done.map(row).join("") + '</div>' : '');
+}
+// ===== BORROWED (money you borrowed and must pay back) =====
+var osub = "l";
+function setO(v){ osub = v; render(); }
+function borrowedLeft(){ return S.borrowed.filter(function(b){ return !b.paid; }).reduce(function(s, b){ return s + b.amt - (b.part || 0); }, 0); }
+function addB(){   // you borrowed money: it lands in the account you pick
+  var n = el("bname").value.trim(), a = parseFloat(el("bamt").value);
+  if (!n || !(a > 0)) { alert("Enter a name and amount"); return; }
+  var id = Date.now(), acc = el("bacc").value, t = ds(new Date());
+  S.borrowed.push({ id: id, name: n, amt: a, acct: acc, date: el("bdt").value || t, part: 0, paid: false, paidOn: "" });
+  S.tx.push({ id: id + 1, type: "adj", amt: a, acct: acc, lbl: "Borrowed", note: n, date: t, bid: id, kind: "in" });
+  save(); render();
+}
+function repay(id, x){   // you pay it back: deducts from the account picked on the row
+  var b = S.borrowed.find(function(v){ return v.id === id; }); if (!b) return;
+  var left = Math.round((b.amt - (b.part || 0)) * 100) / 100, a = x && x < left ? x : left;
+  var sel = el("bs" + id), acc = sel ? sel.value : b.acct, bl = bal(acc), t = ds(new Date());
+  if (bl < a && !confirm(an(acc) + " balance is " + money(bl) + ". Pay anyway?")) return;
+  S.tx.push({ id: Date.now(), type: "adj", amt: -a, acct: acc, lbl: "Repaid", note: b.name, date: t, bid: id, kind: "out" });
+  b.part = Math.round(((b.part || 0) + a) * 100) / 100;
+  if (b.part >= b.amt - 0.005) { b.paid = true; b.paidOn = t; }
+  save(); render();
+}
+function repayPart(id){
+  var b = S.borrowed.find(function(v){ return v.id === id; }); if (!b) return;
+  var left = Math.round((b.amt - (b.part || 0)) * 100) / 100, v = prompt("Amount to pay back now (" + money(left) + " left)");
+  if (v === null) return;
+  var x = parseFloat(v);
+  if (!(x > 0)) { alert("Enter an amount"); return; }
+  repay(id, x);
+}
+function delB(id){ S.borrowed = S.borrowed.filter(function(b){ return b.id !== id; }); save(); render(); }
+function borrowedView(){
+  var t = ds(new Date());
+  var open = S.borrowed.filter(function(b){ return !b.paid; }).sort(function(a, b){ return a.date.localeCompare(b.date); });
+  var done = S.borrowed.filter(function(b){ return b.paid; }).sort(function(a, b){ return b.paidOn.localeCompare(a.paidOn); });
+  function row(b){
+    var late = !b.paid && b.date < t;
+    return '<div class="item">' + badge(b.acct) + '<div><b>' + esc(b.name) + '</b><small>' + (!b.paid && b.part ? money(b.amt - b.part) + ' left' : money(b.amt)) + '</small>' +
+      '<small' + (late ? ' class="r"' : '') + '>' + (b.paid ? 'Paid ' + sd(b.paidOn) : 'Due ' + sd(b.date) + (late ? ' \u00b7 overdue' : '')) + '</small>' +
+      (b.paid ? '' : '<select id="bs' + b.id + '" style="margin:4px 0 0;padding:4px 0;font-size:12px">' + S.accts.map(function(a){ return '<option value="' + a.id + '"' + (a.id === b.acct ? ' selected' : '') + '>From ' + a.name + '</option>'; }).join("") + '</select>') + '</div>' +
+      (b.paid ? '' : '<button class="ghost" onclick="repayPart(' + b.id + ')">Part</button><button onclick="repay(' + b.id + ')">Paid</button>') +
+      '<button class="x" onclick="delB(' + b.id + ')">\u2715</button></div>';
+  }
+  return '<div class="card" style="border:0"><small>You owe</small><b style="font-size:28px;font-weight:300">' + money(borrowedLeft()) + '</b></div>' +
+  '<div class="card"><b>Borrow</b><input id="bname" placeholder="Who lent you"><input id="bamt" type="number" inputmode="decimal" placeholder="Amount">' +
+  '<small style="margin-top:12px">Money went to</small><select id="bacc">' + accOpts("cash") + '</select>' +
+  '<small style="margin-top:12px">Pay back by</small><input id="bdt" type="date" value="' + t + '">' +
+  '<div class="row2"><button style="width:100%" onclick="addB()">Add</button></div></div>' +
+  '<div class="card"><b>To pay back</b>' + (open.map(row).join("") || '<small>You owe nobody right now.</small>') + '</div>' +
+  (done.length ? '<div class="card"><b>Paid back</b>' + done.map(row).join("") + '</div>' : '');
+}
+function owedView(){   // Owed tab: people who owe you / money you borrowed
+  return '<div class="chips"><button class="' + (osub === "l" ? "on" : "") + '" onclick="setO(\'l\')">Owed to me</button>' +
+    '<button class="' + (osub === "b" ? "on" : "") + '" onclick="setO(\'b\')">Borrowed</button></div>' + (osub === "b" ? borrowedView() : lentView());
 }
 var fsub = "over";
 function setF(v){ fsub = v; render(); }
@@ -432,7 +492,7 @@ function unpaidView(){
   (done.length ? '<div class="card"><b>Paid</b>' + done.map(row).join("") + '</div>' : '');
 }
 function home(){
-  var n = S.unpaid.filter(function(u){ return !u.paid; }).length, no = S.owed.filter(function(o){ return !o.paid; }).length;
+  var n = S.unpaid.filter(function(u){ return !u.paid; }).length, no = S.owed.filter(function(o){ return !o.paid; }).length + S.borrowed.filter(function(b){ return !b.paid; }).length;
   return '<h1>Fuck</h1><div class="seg"><button class="' + (fsub === "over" ? "on" : "") + '" onclick="setF(\'over\')">Overview</button>' +
     '<button class="' + (fsub === "unpaid" ? "on" : "") + '" onclick="setF(\'unpaid\')">Unpaid' + (n ? ' (' + n + ')' : '') + '</button>' +
     '<button class="' + (fsub === "owed" ? "on" : "") + '" onclick="setF(\'owed\')">Owed' + (no ? ' (' + no + ')' : '') + '</button></div>' +
@@ -443,7 +503,7 @@ function homeMain(){
   var cats = type === "expense" ? EX : IN;
   var list = m.slice().sort(function(a,b){ return b.date.localeCompare(a.date) || b.id - a.id; }).map(txRow).join("");
   return '<div class="card" style="border:0"><div class="row"><div><small>Income</small><b class="g">' + money(inc) + '</b></div>' +
-  '<div><small>Spent</small><b class="r">' + money(exp) + '</b></div><div><small>Balance</small><b>' + money(inc - exp) + '</b></div></div>' + savingRow() + (owedLeft() ? '<small>Owed to you ' + money(owedLeft()) + '</small>' : '') +
+  '<div><small>Spent</small><b class="r">' + money(exp) + '</b></div><div><small>Balance</small><b>' + money(inc - exp) + '</b></div></div>' + savingRow() + (owedLeft() ? '<small>Owed to you ' + money(owedLeft()) + '</small>' : '') + (borrowedLeft() ? '<small>You owe ' + money(borrowedLeft()) + '</small>' : '') +
   '</div>' +
   '<div class="card"><div class="seg"><button class="' + (type === "expense" ? "on" : "") + '" onclick="setType(\'expense\')">Expense</button>' +
   '<button class="' + (type === "income" ? "on" : "") + '" onclick="setType(\'income\')">Income</button></div>' +
