@@ -346,6 +346,13 @@ function savingRow(){   // overview: Saving = your BPI balance (+ any cash you k
   return '<div class="row" style="margin:0 0 6px"><div><small>Saving</small><b>' + money(a + c) + '</b></div></div>' +
     '<small>BPI ' + money(a) + (c ? ' \u00b7 Cash ' + money(c) : '') + '</small>';
 }
+function borrowedIn(id){   // borrowed money (still to pay back) that went into this account
+  return S.borrowed.filter(function(b){ return !b.paid && root(b.acct) === id; }).reduce(function(s, b){ return s + b.amt - (b.part || 0); }, 0);
+}
+function totalRow(){   // overview: all your money across every account (borrowed money included)
+  var t = S.accts.reduce(function(s, a){ return a.link ? s : s + bal(a.id); }, 0), b = borrowedLeft();
+  return '<div class="row" style="margin:14px 0 6px"><div><small>Total money</small><b>' + money(t) + '</b></div></div>' + (b ? '<small>Includes ' + money(b) + ' borrowed</small>' : '');
+}
 function owedLeft(){ return S.owed.filter(function(o){ return !o.paid; }).reduce(function(s, o){ return s + o.amt - (o.part || 0); }, 0); }
 function addO(){
   var n = el("oname").value.trim(), a = parseFloat(el("oamt").value);
@@ -503,7 +510,7 @@ function homeMain(){
   var cats = type === "expense" ? EX : IN;
   var list = m.slice().sort(function(a,b){ return b.date.localeCompare(a.date) || b.id - a.id; }).map(txRow).join("");
   return '<div class="card" style="border:0"><div class="row"><div><small>Income</small><b class="g">' + money(inc) + '</b></div>' +
-  '<div><small>Spent</small><b class="r">' + money(exp) + '</b></div><div><small>Balance</small><b>' + money(inc - exp) + '</b></div></div>' + savingRow() + (owedLeft() ? '<small>Owed to you ' + money(owedLeft()) + '</small>' : '') + (borrowedLeft() ? '<small>You owe ' + money(borrowedLeft()) + '</small>' : '') +
+  '<div><small>Spent</small><b class="r">' + money(exp) + '</b></div><div><small>Balance</small><b>' + money(inc - exp) + '</b></div></div>' + savingRow() + totalRow() + (owedLeft() ? '<small>Owed to you ' + money(owedLeft()) + '</small>' : '') +
   '</div>' +
   '<div class="card"><div class="seg"><button class="' + (type === "expense" ? "on" : "") + '" onclick="setType(\'expense\')">Expense</button>' +
   '<button class="' + (type === "income" ? "on" : "") + '" onclick="setType(\'income\')">Income</button></div>' +
@@ -573,11 +580,11 @@ function habits(){
 
 function accounts(){
   var total = S.accts.reduce(function(s, a){ return a.link ? s : s + bal(a.id); }, 0);   // linked accounts are not counted twice
-  return '<h1>Accounts</h1><div class="card"><small>Total across all accounts</small><b style="font-size:28px">' + money(total) + '</b></div>' +
+  return '<h1>Accounts</h1><div class="card"><small>Total across all accounts</small><b style="font-size:28px">' + money(total) + '</b>' + (borrowedLeft() ? '<small>Includes ' + money(borrowedLeft()) + ' borrowed</small>' : '') + '</div>' +
   S.accts.map(function(a){
     if (a.link) return "";                         // Apple Pay shows inside UnionBank
     var b = bal(a.id);
-    return '<div class="card"><div class="item" style="border:0;padding:0">' + badge(a.id, 1) + '<div><b>' + a.name + '</b>' + (S.accts.some(function(x){ return x.link === a.id; }) ? '<small>Includes Apple Pay</small>' : '') + '</div><b class="' + (b < 0 ? "r" : "") + '">' + money(b) + '</b></div></div>';
+    return '<div class="card"><div class="item" style="border:0;padding:0">' + badge(a.id, 1) + '<div><b>' + a.name + '</b>' + (S.accts.some(function(x){ return x.link === a.id; }) ? '<small>Includes Apple Pay</small>' : '') + (borrowedIn(a.id) ? '<small>Includes ' + money(borrowedIn(a.id)) + ' borrowed</small>' : '') + '</div><b class="' + (b < 0 ? "r" : "") + '">' + money(b) + '</b></div></div>';
   }).join("") +
   '<div class="card"><b>Add or deduct money</b><select id="aacc">' + accOpts() + '</select>' +
   '<input id="aamt" type="number" inputmode="decimal" placeholder="Amount"><input id="anote" placeholder="Note (optional)">' +
