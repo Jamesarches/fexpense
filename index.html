@@ -225,7 +225,9 @@ function txRow(t){
 }
 
 function impBtn(){
-  return '<div style="text-align:right;margin-top:6px"><label class="imp">Import Apple Pay<input id="impf" type="file" accept=".txt,text/plain" onchange="importAP(this)" hidden></label></div>';
+  return '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px">' +
+    '<label class="imp">Scan receipt<input type="file" accept="image/*" onchange="scanFile(this)" hidden></label>' +
+    '<label class="imp">Import Apple Pay<input id="impf" type="file" accept=".txt,text/plain" onchange="importAP(this)" hidden></label></div>';
 }
 function importAP(inp){   // reads the shortcut's text file; each payment line looks like  FX|date time|amount|merchant
   var f = inp.files && inp.files[0]; if (!f) return;
@@ -451,6 +453,91 @@ function owedView(){   // Owed tab: people who owe you / money you borrowed
   return '<div class="chips"><button class="' + (osub === "l" ? "on" : "") + '" onclick="setO(\'l\')">Owed to me</button>' +
     '<button class="' + (osub === "b" ? "on" : "") + '" onclick="setO(\'b\')">Borrowed</button></div>' + (osub === "b" ? borrowedView() : lentView());
 }
+// ===== SCAN RECEIPT (photo -> reads the total -> you confirm -> money is deducted) =====
+var scan = null;
+function loadOCR(cb){   // the reader (Tesseract) is only downloaded the first time you scan
+  if (typeof Tesseract !== "undefined") return cb();
+  var sc = document.createElement("script");
+  sc.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
+  sc.onload = function(){ cb(); }; sc.onerror = function(){ cb(1); };
+  document.head.appendChild(sc);
+}
+function parseReceipt(text){   // finds the total, other amounts, and the store name from the text of a receipt
+  var lines = text.split(/\r?\n/).map(function(l){ return l.trim(); }).filter(Boolean);
+  var re = /\d{1,3}(?:,\d{3})+\.\d{2}|\d+\.\d{2}/g;
+  function nums(l){ return (l.match(re) || []).map(function(x){ return parseFloat(x.replace(/,/g, "")); }); }
+  var bad = /(sub\s*-?\s*total|vat|change|tender|cash|discount|saving|tax|points|item)/i;
+  var ranks = [/grand\s*total/i, /(total|amount)\s*due|amount\s*payable|balance\s*due/i, /total\s*amount|net\s*amount|amount\s*to\s*pay/i, /\btotal\b/i];
+  var amt = 0, i, r, l, n;
+  for (r = 0; r < ranks.length && !amt; r++) {
+    for (i = lines.length - 1; i >= 0 && !amt; i--) {
+      l = lines[i]; if (!ranks[r].test(l) || bad.test(l)) continue;
+      n = nums(l); if (!n.length && lines[i + 1]) n = nums(lines[i + 1]);   // amount printed on the next line
+      if (n.length) amt = n[n.length - 1];
+    }
+  }
+  var all = []; lines.forEach(function(x){ nums(x).forEach(function(v){ if (v > 0 && v < 1000000 && all.indexOf(v) < 0) all.push(v); }); });
+  all.sort(function(a, b){ return b - a; });
+  if (!amt && all.length) amt = all[0];                // fallback: the biggest amount on the receipt
+  var cands = all.filter(function(v){ return v !== amt; }).slice(0, 3);
+  var note = "";
+  for (i = 0; i < Math.min(lines.length, 6) && !note; i++) {
+    var c = lines[i].replace(/[^A-Za-z0-9&' .\-]/g, "").replace(/\s+/g, " ").trim();
+    if ((c.match(/[A-Za-z]/g) || []).length >= 3 && !/\d{4,}/.test(c)) note = c.slice(0, 28);
+  }
+  return { amt: amt, cands: cands, note: note };
+}
+function scanFile(inp){
+  var f = inp.files && inp.files[0]; if (!f) return;
+  inp.value = ""; fsub = "over"; scan = { status: "reading" }; render();
+  loadOCR(function(err){
+    if (err) { scan = { status: "err", msg: "Scanning needs internet the first time, to download the reader. Connect and try again." }; render(); return; }
+    var img = new Image();
+    img.onerror = function(){ scan = { status: "err", msg: "That photo couldn't be opened." }; render(); };
+    img.onload = function(){
+      var r = Math.min(1, 1600 / Math.max(img.width, img.height)), cv = document.createElement("canvas");
+      cv.width = Math.round(img.width * r); cv.height = Math.round(img.height * r);
+      var cx = cv.getContext("2d"); cx.drawImage(img, 0, 0, cv.width, cv.height);
+      var d = cx.getImageData(0, 0, cv.width, cv.height), a = d.data;      // black & white + more contrast reads better
+      for (var i = 0; i < a.length; i += 4) { var g = a[i] * .299 + a[i + 1] * .587 + a[i + 2] * .114; g = (g - 128) * 1.35 + 128; g = g < 0 ? 0 : g > 255 ? 255 : g; a[i] = a[i + 1] = a[i + 2] = g; }
+      cx.putImageData(d, 0, 0);
+      var worker;
+      Tesseract.createWorker("eng", 1, { logger: function(m){ var e = el("scanpct"); if (e && m.status === "recognizing text") e.textContent = Math.round(m.progress * 100) + "%"; } })
+        .then(function(w){ worker = w; return w.setParameters({ tessedit_pageseg_mode: "6" }); })   // "6" keeps each receipt line together (label + amount)
+        .then(function(){ return worker.recognize(cv); })
+        .then(function(res){
+          worker.terminate();
+          var p = parseReceipt(res.data.text || "");
+          if (!p.amt) { scan = { status: "err", msg: "No total found. Try a flatter, brighter photo, or add it by hand." }; render(); return; }
+          scan = { status: "done", amt: p.amt, cands: p.cands, note: p.note, cat: "Other", acc: "cash" }; render();
+        }).catch(function(){ if (worker) worker.terminate(); scan = { status: "err", msg: "Couldn't read that photo. Try again." }; render(); });
+    };
+    img.src = URL.createObjectURL(f);
+  });
+}
+function scanKeep(){ if (el("sa")) { scan.amt = el("sa").value; scan.note = el("sn").value; scan.cat = el("sc").value; scan.acc = el("sacc").value; } }
+function scanPick(v){ scanKeep(); scan.amt = v; render(); }
+function scanClose(){ scan = null; render(); }
+function scanSave(){
+  scanKeep(); var a = parseFloat(scan.amt);
+  if (!(a > 0)) { alert("Enter an amount"); return; }
+  var b = bal(scan.acc);
+  if (b < a && !confirm(an(scan.acc) + " balance is " + money(b) + ". Deduct anyway?")) return;
+  S.tx.push({ id: Date.now(), type: "expense", amt: a, acct: scan.acc, cat: scan.cat, note: scan.note.trim() || "Receipt", date: ds(new Date()), src: "scan" });
+  scan = null; save(); render();
+}
+function scanCard(){
+  if (!scan) return "";
+  if (scan.status === "reading") return '<div class="card" style="border:0"><b>Reading receipt\u2026</b> <small id="scanpct" style="display:inline">first time takes a little longer</small></div>';
+  if (scan.status === "err") return '<div class="card" style="border:0"><b>Couldn\'t read it</b><small>' + esc(scan.msg) + '</small><div class="row2"><button class="ghost" onclick="scanClose()">Close</button></div></div>';
+  return '<div class="card" style="border:0"><b>Receipt</b><small>Check the amount, then deduct</small>' +
+    '<input id="sa" type="number" inputmode="decimal" value="' + esc(scan.amt) + '" placeholder="Amount">' +
+    (scan.cands.length ? '<div class="chips" style="margin:6px 0 0"><small style="align-self:center;margin-right:-6px">Other amounts</small>' + scan.cands.map(function(c){ return '<button onclick="scanPick(' + c + ')">' + money(c) + '</button>'; }).join("") + '</div>' : '') +
+    '<input id="sn" value="' + esc(scan.note) + '" placeholder="Store / note">' +
+    '<select id="sc">' + EX.map(function(c){ return '<option' + (c === scan.cat ? ' selected' : '') + '>' + c + '</option>'; }).join("") + '</select>' +
+    '<small style="margin-top:12px">Deduct from</small><select id="sacc">' + accOpts(scan.acc) + '</select>' +
+    '<div class="row2"><button style="flex:1" onclick="scanSave()">Deduct</button><button class="ghost" onclick="scanClose()">Cancel</button></div></div>';
+}
 var fsub = "over";
 function setF(v){ fsub = v; render(); }
 function addU(){
@@ -503,7 +590,7 @@ function home(){
   return '<h1>Fuck</h1><div class="seg"><button class="' + (fsub === "over" ? "on" : "") + '" onclick="setF(\'over\')">Overview</button>' +
     '<button class="' + (fsub === "unpaid" ? "on" : "") + '" onclick="setF(\'unpaid\')">Unpaid' + (n ? ' (' + n + ')' : '') + '</button>' +
     '<button class="' + (fsub === "owed" ? "on" : "") + '" onclick="setF(\'owed\')">Owed' + (no ? ' (' + no + ')' : '') + '</button></div>' +
-    (fsub === "unpaid" ? unpaidView() : fsub === "owed" ? owedView() : impBtn() + homeMain());
+    (fsub === "unpaid" ? unpaidView() : fsub === "owed" ? owedView() : scanCard() + impBtn() + homeMain());
 }
 function homeMain(){
   var m = monthTx(), inc = sum(m,"income"), exp = sum(m,"expense");
