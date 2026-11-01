@@ -26,7 +26,7 @@ small,.mut{color:var(--mut);font-size:12px;display:block;letter-spacing:.02em}
 b{font-weight:500}
 .card{border-top:1px solid var(--line);padding:20px 0}
 .row{display:flex;justify-content:space-between;gap:8px;margin-bottom:12px}
-.row b{display:block;font-size:22px;font-weight:300}
+.row b{display:block;font-size:19px;font-weight:300}
 .row2{display:flex;gap:10px;margin-top:14px}
 .g{color:var(--good)}.r{color:var(--bad)}
 input,select,button{font:inherit;font-weight:400;color:var(--tx);background:transparent;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:12px 0;min-width:0;outline:0}
@@ -133,7 +133,7 @@ function pad(n){ return n < 10 ? "0" + n : "" + n; }
 function ds(d){ return d.getFullYear() + "-" + pad(d.getMonth()+1) + "-" + pad(d.getDate()); }
 function money(n){ return CUR + n.toFixed(2); }
 function esc(s){ return String(s).replace(/[&<>"]/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]; }); }
-function monthTx(){ var m = ds(new Date()).slice(0,7); return S.tx.filter(function(t){ return t.date.slice(0,7) === m; }); }
+function monthTx(mo){ var m = mo || ds(new Date()).slice(0,7); return S.tx.filter(function(t){ return t.date.slice(0,7) === m; }); }
 function sum(a, ty){ return a.filter(function(t){ return t.type === ty; }).reduce(function(s,t){ return s + t.amt; }, 0); }
 
 // ===== PART 4: ACTIONS (what buttons do) =====
@@ -180,7 +180,26 @@ function transfer(){
 }
 var hf = "all";
 function setHf(v){ hf = v; render(); }
-function del(id){ var d0 = S.tx.find(function(t){ return t.id === id; }); if (d0 && d0.uid) S.unpaid.forEach(function(u){ if (u.id === d0.uid) { u.part = Math.max(0, Math.round(((u.part || 0) - d0.amt) * 100) / 100); u.paid = false; u.paidOn = ""; } }); if (d0 && d0.bid) {
+var vm = ds(new Date()).slice(0,7), curM = vm, hcat = "", NODATE = false;   // vm = the month you are looking at
+function monthList(){   // only months that have entries, plus the current month (a new month appears by itself when it starts)
+  var cur = ds(new Date()).slice(0,7), m = [cur];
+  S.tx.forEach(function(t){ var k = t.date.slice(0,7); if (m.indexOf(k) < 0) m.push(k); });
+  return m.sort();
+}
+function monthLabel(k){ var p = k.split("-"); return new Date(+p[0], +p[1] - 1, 1).toLocaleString("default", { month: "long", year: "numeric" }); }
+function monthName(){ return monthLabel(vm); }
+function shiftVm(n){ var L = monthList(), i = L.indexOf(vm) + n; if (i < 0 || i >= L.length) return; vm = L[i]; hcat = ""; render(); }
+function pickVm(v){ vm = v; hcat = ""; render(); }
+function monthBar(){   // < Month > : arrows step through the months that have entries, the name opens the full list
+  var L = monthList(), i = L.indexOf(vm);
+  return '<div class="row" style="align-items:center;margin:6px 0"><button class="ghost" style="' + (i <= 0 ? 'opacity:.25' : '') + '" onclick="shiftVm(-1)">\u25c0</button>' +
+    '<select onchange="pickVm(this.value)" style="width:auto;margin:0;border:0;text-align:center;text-align-last:center;font-size:16px;padding:6px 8px">' +
+    L.slice().reverse().map(function(k){ return '<option value="' + k + '"' + (k === vm ? ' selected' : '') + '>' + monthLabel(k) + '</option>'; }).join("") + '</select>' +
+    '<button class="ghost" style="' + (i >= L.length - 1 ? 'opacity:.25' : '') + '" onclick="shiftVm(1)">\u25b6</button></div>';
+}
+function setHcat(c){ hcat = hcat === c ? "" : c; render(); }
+function del(id){ var d0 = S.tx.find(function(t){ return t.id === id; }); if (d0 && d0.uid) S.unpaid.forEach(function(u){ if (u.id === d0.uid) { u.part = Math.max(0, Math.round(((u.part || 0) - d0.amt) * 100) / 100); u.paid = false; u.paidOn = ""; } }); if (d0 && d0.sid) { var oids = S.owed.filter(function(o){ return o.sid === d0.sid; }).map(function(o){ return o.id; }); S.tx = S.tx.filter(function(t){ return t.sid !== d0.sid && oids.indexOf(t.oid) < 0; }); S.owed = S.owed.filter(function(o){ return o.sid !== d0.sid; }); }
+  if (d0 && d0.bid) {
     if (d0.kind === "in") { S.borrowed = S.borrowed.filter(function(b){ return b.id !== d0.bid; }); S.tx = S.tx.filter(function(t){ return t.bid !== d0.bid; }); }   // removing a borrow also removes its repayments
     else S.borrowed.forEach(function(b){ if (b.id === d0.bid) { b.part = Math.max(0, Math.round(((b.part || 0) - Math.abs(d0.amt)) * 100) / 100); b.paid = false; b.paidOn = ""; } });
   }
@@ -218,7 +237,7 @@ function txRow(t){
   var tr = t.type === "transfer", adj = t.type === "adj", inc = t.type === "income";
   var pos = inc || (adj && t.amt > 0), amt = Math.abs(t.amt);
   var title = tr ? an(t.from) + " → " + an(t.to) : adj ? (t.lbl || (t.amt > 0 ? "Added money" : "Deducted money")) : (t.note || t.cat);
-  var sub = (tr ? "Transfer" : an(t.acct)) + (t.note && (tr || adj) ? " · " + esc(t.note) : "") + (inc || t.type === "expense" ? " · " + t.cat : "") + " · " + sd(t.date);
+  var sub = (tr ? "Transfer" : an(t.acct)) + (t.note && (tr || adj) ? " · " + esc(t.note) : "") + (inc || t.type === "expense" ? " · " + t.cat : "") + (t.scope === "shared" ? " · Shared of " + money(t.total) : t.scope === "mine" ? " · Mine" : "") + (NODATE ? "" : " · " + sd(t.date));
   return '<div class="item">' + (tr ? '<span class="bdg" style="background:#555">⇄</span>' : badge(t.acct)) + '<div><b>' + esc(title) + '</b><small>' + sub + '</small></div>' +
     '<span class="' + (tr ? "" : pos ? "g" : "r") + '">' + (tr ? "" : pos ? "+" : "-") + money(amt) + '</span>' +
     '<button class="x" onclick="del(' + t.id + ')">✕</button></div>';
@@ -365,7 +384,7 @@ function addO(){
 function recv(id, x){   // someone paid you: adds the money to the chosen account and logs it as income
   var o = S.owed.find(function(v){ return v.id === id; }); if (!o) return;
   var left = Math.round((o.amt - (o.part || 0)) * 100) / 100, a = x && x < left ? x : left, t = ds(new Date());
-  S.tx.push({ id: Date.now(), type: "income", amt: a, acct: o.acct, cat: "Paid back", note: o.name, date: t, oid: id });
+  S.tx.push(o.sh ? { id: Date.now(), type: "adj", amt: a, acct: o.acct, lbl: "Paid back", note: o.name, date: t, oid: id } : { id: Date.now(), type: "income", amt: a, acct: o.acct, cat: "Paid back", note: o.name, date: t, oid: id });
   o.part = Math.round(((o.part || 0) + a) * 100) / 100;
   if (o.part >= o.amt - 0.005) { o.paid = true; o.paidOn = t; }
   save(); render();
@@ -386,7 +405,8 @@ function lentView(){
   function row(o){
     var late = !o.paid && o.date < t;
     return '<div class="item">' + badge(o.acct) + '<div><b>' + esc(o.name) + '</b><small>' + (!o.paid && o.part ? money(o.amt - o.part) + ' left of ' + money(o.amt) : money(o.amt)) + '</small>' +
-      '<small' + (late ? ' class="r"' : '') + '>' + (o.paid ? 'Paid ' + o.paidOn : 'Expected ' + o.date + (late ? ' \u00b7 overdue' : '')) + '</small></div>' +
+      '<small' + (late ? ' class="r"' : '') + '>' + (o.paid ? 'Paid ' + o.paidOn : 'Expected ' + o.date + (late ? ' \u00b7 overdue' : '')) + '</small>' +
+      (o.note ? '<small style="font-size:11px;opacity:.75;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(o.note) + '</small>' : '') + '</div>' +
       (o.paid ? '' : '<button class="ghost" onclick="recvPart(' + o.id + ')">Part</button><button onclick="recv(' + o.id + ')">Paid</button>') +
       '<button class="x" onclick="delO(' + o.id + ')">\u2715</button></div>';
   }
@@ -509,34 +529,67 @@ function scanFile(inp){
           worker.terminate();
           var p = parseReceipt(res.data.text || "");
           if (!p.amt) { scan = { status: "err", msg: "No total found. Try a flatter, brighter photo, or add it by hand." }; render(); return; }
-          scan = { status: "done", amt: p.amt, cands: p.cands, note: p.note, cat: "Other", acc: "cash" }; render();
+          scan = { status: "done", amt: p.amt, cands: p.cands, note: p.note, cat: "Other", acc: "cash", scope: "mine", with: "", mine: "", text: res.data.text || "" }; render();
         }).catch(function(){ if (worker) worker.terminate(); scan = { status: "err", msg: "Couldn't read that photo. Try again." }; render(); });
     };
     img.src = URL.createObjectURL(f);
   });
 }
-function scanKeep(){ if (el("sa")) { scan.amt = el("sa").value; scan.note = el("sn").value; scan.cat = el("sc").value; scan.acc = el("sacc").value; } }
+function splitShare(total, k, mineStr){   // my share (blank = equal split) and what each other person owes
+  var my = parseFloat(mineStr);
+  if (!(my >= 0 && my <= total)) my = Math.round(total / (k + 1) * 100) / 100;
+  var rest = Math.round((total - my) * 100) / 100, each = [], base = Math.floor(rest / k * 100) / 100, acc = 0, i;
+  for (i = 0; i < k; i++) { var v = i === k - 1 ? Math.round((rest - acc) * 100) / 100 : base; each.push(v); acc += v; }
+  return { mine: my, others: rest, each: each };
+}
+function nameList(w){ return (w || "").split(",").map(function(x){ return x.trim(); }).filter(Boolean); }
+function shareText(a, w, m){
+  a = parseFloat(a); var names = nameList(w);
+  if (!(a > 0) || !names.length) return "Add who you're sharing with";
+  var sp = splitShare(a, names.length, m);
+  return "My share " + money(sp.mine) + " \u00b7 Owed: " + names.map(function(n, i){ return n + " " + money(sp.each[i]); }).join(", ");
+}
+function scanKeep(){
+  if (!el("sa")) return;
+  scan.amt = el("sa").value; scan.note = el("sn").value; scan.cat = el("sc").value; scan.acc = el("sacc").value;
+  if (el("sw")) { scan.with = el("sw").value; scan.mine = el("sm").value; }
+}
+function scanPrev(){ var e = el("sprev"); if (e) e.textContent = shareText(el("sa").value, el("sw") ? el("sw").value : "", el("sm") ? el("sm").value : ""); }
+function scanScope(v){ scanKeep(); scan.scope = v; render(); }
 function scanPick(v){ scanKeep(); scan.amt = v; render(); }
 function scanClose(){ scan = null; render(); }
-function scanSave(){
+function scanSave(){   // records the whole receipt: mine = one expense; shared = my share + what you paid for others + a "owed to you" entry per person
   scanKeep(); var a = parseFloat(scan.amt);
   if (!(a > 0)) { alert("Enter an amount"); return; }
+  var shared = scan.scope === "shared", names = shared ? nameList(scan.with) : [];
+  if (shared && !names.length) { alert("Who is it shared with?"); return; }
   var b = bal(scan.acc);
   if (b < a && !confirm(an(scan.acc) + " balance is " + money(b) + ". Deduct anyway?")) return;
-  S.tx.push({ id: Date.now(), type: "expense", amt: a, acct: scan.acc, cat: scan.cat, note: scan.note.trim() || "Receipt", date: ds(new Date()), src: "scan" });
+  var t = ds(new Date()), id = Date.now(), note = scan.note.trim() || "Receipt";
+  if (!shared) {
+    S.tx.push({ id: id, type: "expense", amt: a, acct: scan.acc, cat: scan.cat, note: note, date: t, src: "scan", scope: "mine", rtext: (scan.text || "").slice(0, 1500) });
+  } else {
+    var sp = splitShare(a, names.length, scan.mine);
+    if (sp.mine > 0) S.tx.push({ id: id, type: "expense", amt: sp.mine, acct: scan.acc, cat: scan.cat, note: note, date: t, src: "scan", scope: "shared", total: a, people: names.length + 1, with: names.join(", "), sid: id, rtext: (scan.text || "").slice(0, 1500) });
+    if (sp.others > 0) S.tx.push({ id: id + 1, type: "adj", amt: -sp.others, acct: scan.acc, lbl: "Paid for others", note: note + " \u00b7 " + names.join(", "), date: t, sid: id });
+    names.forEach(function(n, i){ if (sp.each[i] > 0) S.owed.push({ id: id + 2 + i, name: n, amt: sp.each[i], acct: scan.acc, date: t, part: 0, paid: false, paidOn: "", sid: id, sh: true, note: note }); });
+  }
   scan = null; save(); render();
 }
 function scanCard(){
   if (!scan) return "";
   if (scan.status === "reading") return '<div class="card" style="border:0"><b>Reading receipt\u2026</b> <small id="scanpct" style="display:inline">first time takes a little longer</small></div>';
   if (scan.status === "err") return '<div class="card" style="border:0"><b>Couldn\'t read it</b><small>' + esc(scan.msg) + '</small><div class="row2"><button class="ghost" onclick="scanClose()">Close</button></div></div>';
-  return '<div class="card" style="border:0"><b>Receipt</b><small>Check the amount, then deduct</small>' +
-    '<input id="sa" type="number" inputmode="decimal" value="' + esc(scan.amt) + '" placeholder="Amount">' +
+  var sh = scan.scope === "shared";
+  return '<div class="card" style="border:0"><b>Receipt</b><small>Check the details, then deduct</small>' +
+    '<div class="seg" style="margin-top:10px"><button class="' + (!sh ? "on" : "") + '" onclick="scanScope(\'mine\')">Mine</button><button class="' + (sh ? "on" : "") + '" onclick="scanScope(\'shared\')">Shared</button></div>' +
+    '<input id="sa" type="number" inputmode="decimal" value="' + esc(scan.amt) + '" placeholder="Total" oninput="scanPrev()">' +
     (scan.cands.length ? '<div class="chips" style="margin:6px 0 0"><small style="align-self:center;margin-right:-6px">Other amounts</small>' + scan.cands.map(function(c){ return '<button onclick="scanPick(' + c + ')">' + money(c) + '</button>'; }).join("") + '</div>' : '') +
     '<input id="sn" value="' + esc(scan.note) + '" placeholder="Store / note">' +
     '<select id="sc">' + EX.map(function(c){ return '<option' + (c === scan.cat ? ' selected' : '') + '>' + c + '</option>'; }).join("") + '</select>' +
-    '<small style="margin-top:12px">Deduct from</small><select id="sacc">' + accOpts(scan.acc) + '</select>' +
-    '<div class="row2"><button style="flex:1" onclick="scanSave()">Deduct</button><button class="ghost" onclick="scanClose()">Cancel</button></div></div>';
+    (sh ? '<input id="sw" value="' + esc(scan.with) + '" placeholder="Shared with (names, comma separated)" oninput="scanPrev()"><input id="sm" type="number" inputmode="decimal" value="' + esc(scan.mine) + '" placeholder="My share (blank = equal split)" oninput="scanPrev()"><small id="sprev" style="margin-top:8px">' + esc(shareText(scan.amt, scan.with, scan.mine)) + '</small>' : '') +
+    '<small style="margin-top:12px">' + (sh ? 'I paid from' : 'Deduct from') + '</small><select id="sacc">' + accOpts(scan.acc) + '</select>' +
+    '<div class="row2"><button style="flex:1" onclick="scanSave()">' + (sh ? 'Save' : 'Deduct') + '</button><button class="ghost" onclick="scanClose()">Cancel</button></div></div>';
 }
 var fsub = "over";
 function setF(v){ fsub = v; render(); }
@@ -593,11 +646,11 @@ function home(){
     (fsub === "unpaid" ? unpaidView() : fsub === "owed" ? owedView() : scanCard() + impBtn() + homeMain());
 }
 function homeMain(){
-  var m = monthTx(), inc = sum(m,"income"), exp = sum(m,"expense");
+  var m = monthTx(vm), inc = sum(m,"income"), exp = sum(m,"expense");
   var cats = type === "expense" ? EX : IN;
   var list = m.slice().sort(function(a,b){ return b.date.localeCompare(a.date) || b.id - a.id; }).map(txRow).join("");
-  return '<div class="card" style="border:0"><div class="row"><div><small>Income</small><b class="g">' + money(inc) + '</b></div>' +
-  '<div><small>Spent</small><b class="r">' + money(exp) + '</b></div><div><small>Balance</small><b>' + money(inc - exp) + '</b></div></div>' + savingRow() + totalRow() + (owedLeft() ? '<small>Owed to you ' + money(owedLeft()) + '</small>' : '') +
+  return monthBar() + '<div class="card" style="border:0"><div class="row"><div><small>Income</small><b class="g">' + money(inc) + '</b></div>' +
+  '<div><small>Spent</small><b class="r">' + money(exp) + '</b></div><div><small>Balance</small><b>' + money(inc - exp) + '</b></div></div>' + (vm === ds(new Date()).slice(0,7) ? savingRow() + totalRow() + (owedLeft() ? '<small>Owed to you ' + money(owedLeft()) + '</small>' : '') : "") +
   '</div>' +
   '<div class="card"><div class="seg"><button class="' + (type === "expense" ? "on" : "") + '" onclick="setType(\'expense\')">Expense</button>' +
   '<button class="' + (type === "income" ? "on" : "") + '" onclick="setType(\'income\')">Income</button></div>' +
@@ -606,7 +659,7 @@ function homeMain(){
   '<select id="cat">' + cats.map(function(c){ return '<option>' + c + '</option>'; }).join("") + '</select>' +
   '<input id="note" placeholder="Note (optional)"><input id="dt" type="date" value="' + ds(new Date()) + '">' +
   '<div class="row2"><button style="width:100%" onclick="add()">Add ' + type + '</button></div></div>' +
-  '<div class="card"><b>This month</b>' + (list || '<small>Nothing yet. Add your first entry above.</small>') + '</div>';
+  '<div class="card"><b>' + (vm === ds(new Date()).slice(0,7) ? "This month" : monthName()) + '</b>' + (list || '<small>Nothing yet. Add your first entry above.</small>') + '</div>';
 }
 
 function daily(){
@@ -680,15 +733,32 @@ function accounts(){
   '<input id="tamt" type="number" inputmode="decimal" placeholder="Amount"><div class="row2"><button style="width:100%" onclick="transfer()">Transfer</button></div></div>' + backupCard();
 }
 
-function historyScreen(){
-  var list = S.tx.filter(function(t){ return hf === "all" || t.acct === hf || t.from === hf || t.to === hf || root(t.acct) === hf || root(t.from) === hf || root(t.to) === hf; })
-    .sort(function(a, b){ return b.date.localeCompare(a.date) || b.id - a.id; });
+function historyScreen(){   // one month at a time: spent / income, spending by category, then entries day by day
+  var list = S.tx.filter(function(t){ return t.date.slice(0,7) === vm && (hf === "all" || t.acct === hf || t.from === hf || t.to === hf || root(t.acct) === hf || root(t.from) === hf || root(t.to) === hf); });
+  var inc = sum(list, "income"), exp = sum(list, "expense"), by = {};
+  list.forEach(function(t){ if (t.type === "expense") by[t.cat] = (by[t.cat] || 0) + t.amt; });
+  var cats = Object.keys(by).sort(function(a, b){ return by[b] - by[a]; }), mx = cats.length ? by[cats[0]] : 1;
+  var rows = hcat ? list.filter(function(t){ return t.type === "expense" && t.cat === hcat; }) : list;
   var chips = '<button class="' + (hf === "all" ? "on" : "") + '" onclick="setHf(\'all\')">All</button>' + S.accts.map(function(a){
     return '<button class="' + (hf === a.id ? "on" : "") + '" onclick="setHf(\'' + a.id + '\')">' + a.name + '</button>';
   }).join("");
-  return '<h1>History</h1><div class="chips wrap">' + chips + '</div><div class="card" style="border:0;padding:0">' + (list.map(txRow).join("") || '<small>No transactions yet.</small>') + '</div>';
+  var catHtml = cats.map(function(c){
+    return '<div onclick="setHcat(\'' + c + '\')" style="cursor:pointer;padding:7px 0;opacity:' + (hcat && hcat !== c ? 0.35 : 1) + '"><div class="row" style="margin:0 0 5px;font-size:14px"><span>' + c + '</span><span>' + money(by[c]) + '</span></div>' +
+      '<div class="bar" style="margin:0"><i style="width:' + (by[c] / mx * 100) + '%"></i></div></div>';
+  }).join("");
+  var days = {}; rows.forEach(function(t){ (days[t.date] = days[t.date] || []).push(t); });
+  NODATE = true;
+  var listHtml = Object.keys(days).sort().reverse().map(function(d){
+    days[d].sort(function(a, b){ return b.id - a.id; });
+    var dx = sum(days[d], "expense");
+    return '<div class="row" style="margin:20px 0 0"><small>' + sd(d) + '</small>' + (dx ? '<small>' + money(dx) + '</small>' : '') + '</div>' + days[d].map(txRow).join("");
+  }).join("");
+  NODATE = false;
+  return '<h1>History</h1>' + monthBar() + '<div class="chips wrap" style="margin-top:2px">' + chips + '</div>' +
+    '<div class="row" style="margin:14px 0 6px"><div><small>Spent</small><b class="r">' + money(exp) + '</b></div><div style="text-align:right"><small>Income</small><b class="g">' + money(inc) + '</b></div></div>' +
+    (catHtml ? '<div class="card" style="border:0;padding:6px 0 0">' + catHtml + (hcat ? '<small style="margin-top:6px">Showing ' + esc(hcat) + ' \u00b7 tap it again to see everything</small>' : '') + '</div>' : '') +
+    (listHtml || '<div class="card" style="border:0"><small>Nothing recorded this month.</small></div>');
 }
-
 function charts(){
   var m = monthTx(), exp = m.filter(function(t){ return t.type === "expense"; }), by = {}, max = 1;
   exp.forEach(function(t){ by[t.cat] = (by[t.cat] || 0) + t.amt; });
@@ -716,6 +786,9 @@ function charts(){
 
 // ===== PART 6: DRAW THE SCREEN =====
 function render(){
+  var cm = ds(new Date()).slice(0,7);
+  if (cm !== curM) { curM = cm; vm = cm; }                       // a new month started: jump to it
+  else if (monthList().indexOf(vm) < 0) vm = cm;                 // that month has no entries any more
   var screens = { home: home, monthly: monthlyView, accounts: accounts, history: historyScreen, daily: daily, habits: habits, charts: charts };
   el("app").innerHTML = (backupDue() ? bkBanner() : "") + screens[tab]();
   document.querySelectorAll("nav button").forEach(function(b){ b.classList.toggle("on", b.dataset.t === tab); });
